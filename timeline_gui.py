@@ -8,10 +8,25 @@ from __future__ import annotations
 from dataclasses import replace
 import math
 from tkinter import messagebox, simpledialog
+import tkinter as tk
 
 from timeline_editor import (Transition, validate_transitions,
                              proposals_from_thermal, snap_to_recorded_sample)
 from session_store import save_session
+
+
+def parse_inline_q(text):
+    """Read operator-provided heater power [W]. No U/I or thermal inference."""
+    value = str(text).strip().replace(',', '.')
+    if not value:
+        raise ValueError('Pole Q jest puste. Wpisz nastawę mocy grzałki: Q = [   ] W.')
+    try:
+        result = float(value)
+    except ValueError as error:
+        raise ValueError('Q musi być liczbą w watach (np. 5 lub 12,5).') from error
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError('Dla ON i zmiany Q wpisz wartość Q > 0 W.')
+    return result
 
 
 class TimelineInteractionMixin:
@@ -25,9 +40,9 @@ class TimelineInteractionMixin:
             return
         self.chart_edit_mode = mode
         labels = {
-            'ON':'Kliknij na wykresie chwilę ON. Następnie podaj faktyczną nastawę Q [W].',
+            'ON':'Najpierw wpisz Q = [   ] W, następnie kliknij na wykresie chwilę ON.',
             'OFF':'Kliknij na wykresie chwilę OFF; od tego momentu program przyjmie 0 W.',
-            'CHANGE_Q':'Kliknij na wykresie zmianę mocy; następnie wpisz nowe Q [W].'
+            'CHANGE_Q':'Najpierw wpisz nową Q = [   ] W, następnie kliknij zmianę mocy na wykresie.'
         }
         if isinstance(mode,tuple) and mode[0]=='MOVE':
             text='Kliknij nowe miejsce dla wybranego znacznika ON/OFF/Q.'
@@ -66,17 +81,13 @@ class TimelineInteractionMixin:
         self._timeline_changed(previous)
 
     def _q_for_on(self, kind):
-        row=self._get()
-        suggested=row.get('constant_q')
-        if suggested is None or suggested<=0:
-            existing=[e.q_w for e in row.get('timeline_events', [])
-                      if e.q_w is not None and e.q_w>0]
-            suggested=existing[-1] if existing else 10.
-        return simpledialog.askfloat(
-            'Rzeczywista nastawa mocy Q',
-            'Wpisz ustawioną przez Ciebie moc grzałki dla '+kind+
-            ' [W]. To NIE jest moc wyznaczona z temperatur:',
-            initialvalue=suggested, minvalue=0.000001, parent=self)
+        """Q must be explicitly typed by the operator in the inline field."""
+        try:
+            return parse_inline_q(self.editor_q_var.get())
+        except ValueError as exc:
+            messagebox.showwarning('Podaj Q [W]', str(exc), parent=self)
+            self.editor_q_entry.focus_set()
+            return None
 
     def _add_marker(self, kind, minute):
         row=self._get()
@@ -85,15 +96,64 @@ class TimelineInteractionMixin:
         else:
             q=self._q_for_on(kind)
             if q is None:
-                return
+                return False
         proposed=list(row.get('timeline_events', []))
         proposed.append(Transition(minute,kind,q,'operator'))
         self._apply_timeline(proposed)
+        return True
+
+    def add_off_at_end(self):
+        """Explicit operator confirmation; never infer heater OFF from EOF."""
+        if self.active is None:
+            messagebox.showinfo('Koniec pomiaru', 'Najpierw wczytaj CSV.', parent=self)
+            return
+        duration=self._duration_min()
+        row=self._get()
+        items=list(row.get('timeline_events', []))
+        if any(abs(item.time_min-duration)<1e-8 and item.kind=='OFF' for item in items):
+            self.status.set('OFF na końcu CSV już jest zapisany.')
+            return
+        if not messagebox.askyesno('Potwierdzenie OFF',
+                'Czy grzałka została rzeczywiście wyłączona dokładnie '
+                'przy końcu rejestracji?\n\n'
+                'Jeśli NIE: pozostaw tylko oznaczenie KONIEC CSV. '
+                'Koniec zapisu nie jest dowodem OFF.',
+                parent=self, icon='question'):
+            return
+        items.append(Transition(duration,'OFF',0.,'operator'))
+        try:
+            self._apply_timeline(items)
+        except ValueError as exc:
+            messagebox.showerror('OFF na końcu',str(exc),parent=self)
+
+    def _right_click_menu(self, event):
+        """Add ON/OFF at a chosen time directly from the plot context menu."""
+        row=self._get()
+        try:
+            minute=snap_to_recorded_sample(event.xdata,row['record'].t)
+        except ValueError as exc:
+            messagebox.showwarning('Nie można wybrać czasu',str(exc),parent=self)
+            return
+        menu=tk.Menu(self,tearoff=False)
+        menu.add_command(label='ON tutaj (Q z pola)',command=lambda:self._add_marker('ON',minute))
+        menu.add_command(label='OFF tutaj (0 W)',command=lambda:self._add_marker('OFF',minute))
+        menu.add_command(label='Zmiana Q tutaj (Q z pola)',command=lambda:self._add_marker('CHANGE_Q',minute))
+        menu.add_separator()
+        menu.add_command(label='OFF na końcu CSV (potwierdź)',command=self.add_off_at_end)
+        try:
+            menu.tk_popup(self.winfo_pointerx(),self.winfo_pointery())
+        finally:
+            menu.grab_release()
 
     def _on_chart_press(self, event):
         if self.active is None or event.inaxes not in self.axes:
             return
-        if event.button != 1 or event.xdata is None or bool(self.toolbar.mode):
+        if event.xdata is None or bool(self.toolbar.mode):
+            return
+        if event.button == 3:
+            self._right_click_menu(event)
+            return
+        if event.button != 1:
             return
         row=self._get()
         mode=self.chart_edit_mode
@@ -104,8 +164,8 @@ class TimelineInteractionMixin:
                 self._set_chart_mode(None)
                 return
             if mode in ('ON','OFF','CHANGE_Q'):
-                self._add_marker(mode,minute)
-                self._set_chart_mode(None)
+                if self._add_marker(mode,minute):
+                    self._set_chart_mode(None)
                 return
             near=None
             best=11.
@@ -176,9 +236,12 @@ class TimelineInteractionMixin:
         if item.kind=='OFF':
             messagebox.showinfo('OFF','Znacznik OFF zawsze ma Q=0 W. Zmień jego typ przez usunięcie i dodanie ON.')
             return
-        result=simpledialog.askfloat('Edytuj Q',f'Nowa moc [{item.kind}] [W]:',
-                                     initialvalue=item.q_w,minvalue=0.000001,parent=self)
-        if result is None:
+        # The same in-line Q field serves both new markers and edits.
+        try:
+            result=parse_inline_q(self.editor_q_var.get())
+        except ValueError as exc:
+            messagebox.showwarning('Edytuj Q',str(exc),parent=self)
+            self.editor_q_entry.focus_set()
             return
         items[index]=replace(item,q_w=result)
         try: self._apply_timeline(items)

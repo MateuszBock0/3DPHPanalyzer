@@ -31,8 +31,11 @@ def validate_transitions(transitions, duration_min):
             raise ValueError('Nieznany rodzaj ręcznego zdarzenia.')
         if event.source not in ('operator', 'accepted_thermal_estimate'):
             raise ValueError('Nieznane pochodzenie znacznika.')
-        if not isfinite(event.time_min) or not 0 <= event.time_min < duration_min:
-            raise ValueError('Znacznik musi leżeć wewnątrz czasu pomiaru.')
+        # A confirmed OFF may sit exactly at the last recorded instant.
+        # No other event may start a nonzero heating interval at this boundary.
+        terminal_off = event.kind == 'OFF' and abs(event.time_min-duration_min) < 1e-8
+        if not isfinite(event.time_min) or not (0 <= event.time_min < duration_min or terminal_off):
+            raise ValueError('ON/Q musi poprzedzać koniec pomiaru. OFF może przypadać dokładnie na koniec CSV.')
         if event.kind == 'OFF':
             if event.q_w is not None and event.q_w != 0:
                 raise ValueError('OFF musi oznaczać 0 W.')
@@ -49,8 +52,11 @@ def timeline_stages(transitions, duration_min):
     result = []
     for i, event in enumerate(ordered):
         end = ordered[i+1].time_min if i+1 < len(ordered) else duration_min
-        result.append(PowerStage(event.time_min, end,
-                                 0. if event.kind == 'OFF' else event.q_w))
+        # Terminal OFF closes the annotation, but has no measured duration.
+        # Do not create a zero-length stage that would fail power validation.
+        if end > event.time_min + 1e-9:
+            result.append(PowerStage(event.time_min, end,
+                                     0. if event.kind == 'OFF' else event.q_w))
     return result
 
 def operator_marker_stages(transitions, duration_min):
@@ -131,3 +137,15 @@ def snap_to_recorded_sample(minutes, seconds, *, max_offset_s=35.):
     if abs(target-chosen)>tolerance:
         raise ValueError('Kliknięto w lukę rejestracji, bez pobliskiej próbki. Wybierz czas z dostępnymi pomiarami.')
     return (chosen-seconds[0])/60.
+
+
+def last_heating_boundary(transitions, duration_min):
+    """Describe the closing edge without inventing an electrical OFF.
+
+    Returns (time_min, text, electrically_confirmed_by_operator).
+    No transition means a data boundary, not evidence of heater shutoff.
+    """
+    ordered = validate_transitions(transitions, duration_min) if transitions else []
+    if ordered and ordered[-1].kind == 'OFF':
+        return ordered[-1].time_min, 'OFF (wpis operatora)', ordered[-1].source == 'operator'
+    return duration_min, 'KONIEC CSV — OFF niepotwierdzone', False

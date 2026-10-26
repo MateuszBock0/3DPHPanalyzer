@@ -32,7 +32,8 @@ from session_config import (export_configuration, validated_import,
 import methodology
 from timeline_editor import (Transition, validate_transitions, resolve_schedule,
                              proposals_from_thermal, snap_to_recorded_sample,
-                             timeline_stages, operator_marker_stages)
+                             timeline_stages, operator_marker_stages,
+                             last_heating_boundary)
 from session_store import save_session, restore_session
 from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
@@ -221,17 +222,27 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         ttk.Button(top, text='Ustaw stałe Q…', command=self.set_constant_q,
                    style='Accent.TButton').pack(side='left', padx=(0, 12))
         editor = ttk.Frame(self.chart_page)
-        editor.pack(fill='x', padx=10, pady=(3, 5))
-        for label, mode in [('Kliknij ON', 'ON'), ('Kliknij OFF', 'OFF'),
+        editor.pack(fill='x', padx=10, pady=(3, 2))
+        ttk.Label(editor, text='Q =', font=('Segoe UI', 11, 'bold')).pack(side='left', padx=(3, 4))
+        self.editor_q_var = tk.StringVar(value='')
+        self.editor_q_entry = ttk.Entry(editor, textvariable=self.editor_q_var, width=10)
+        self.editor_q_entry.pack(side='left')
+        ttk.Label(editor, text='W  (moc wpisana przez operatora)').pack(side='left', padx=(4, 12))
+        for label, mode in [('ON na wykresie', 'ON'), ('OFF na wykresie', 'OFF'),
                             ('Zmień Q', 'CHANGE_Q')]:
             ttk.Button(editor, text=label,
                 command=lambda k=mode: self._set_chart_mode(k)).pack(side='left', padx=3)
-        ttk.Button(editor, text='Zatwierdź sugestie ON?/OFF?',
-            command=self.accept_thermal_proposals).pack(side='left', padx=7)
-        ttk.Button(editor, text='Cofnij', command=self.undo_timeline).pack(side='left', padx=4)
-        ttk.Button(editor, text='Anuluj', command=lambda: self._set_chart_mode(None)).pack(side='left', padx=4)
-        self.editor_hint = tk.StringVar(value='Kliknij ON/OFF na wykresie albo przeciągnij istniejący znacznik. '
-                                                'Sugestie pozostają oznaczone jako niepewne.')
+        editor2 = ttk.Frame(self.chart_page)
+        editor2.pack(fill='x', padx=10, pady=(1, 3))
+        ttk.Button(editor2, text='OFF na końcu CSV (potwierdź)',
+                   command=self.add_off_at_end).pack(side='left', padx=3)
+        ttk.Button(editor2, text='Sugestie ON?/OFF?',
+                   command=self.accept_thermal_proposals).pack(side='left', padx=6)
+        ttk.Button(editor2, text='Cofnij', command=self.undo_timeline).pack(side='left', padx=4)
+        ttk.Button(editor2, text='Anuluj', command=lambda: self._set_chart_mode(None)).pack(side='left', padx=4)
+        self.editor_hint = tk.StringVar(value='Wpisz Q w W, wybierz ON lub zmianę Q i kliknij na wykresie. '
+                           'OFF = 0 W. Prawy przycisk myszy: menu ON/OFF/Q. '
+                           'Koniec CSV nie oznacza automatycznie wyłączenia grzałki.')
         ttk.Label(self.chart_page, textvariable=self.editor_hint, style='Sub.TLabel',
                   wraplength=880).pack(fill='x', padx=14, pady=(0, 3))
         self.constant_q_label = tk.StringVar(value='Q: nieustawiona · dostępne ręczne nadpisania w zakładce Moc Q / R')
@@ -291,9 +302,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.diagnosis_details = tk.StringVar(value='Wybierz epizod O1/O2.')
         ttk.Label(root, textvariable=self.diagnosis_details, style='Sub.TLabel',
                   wraplength=920, justify='left').pack(anchor='w', pady=10)
-        ttk.Label(root, text='Co możesz wprowadzić: rzeczywiste Q i granice zmian '
-                  'mocy, deklarację chłodzenia z dziennika. Dodatkowe cenne pomiary: '
-                  'zsynchronizowany log U/I i temperatura otoczenia.',
+        ttk.Label(root, text='Co możesz wprowadzić: zadane Q [W] oraz granice '
+                  'zmian grzania z notatek eksperymentalnych (U i I nie są '
+                  'rejestrowane), a także deklarację warunków chłodzenia. '
+                  'W przyszłych pomiarach przydatna byłaby temperatura otoczenia.',
                   style='Sub.TLabel', wraplength=920).pack(anchor='w', pady=8)
 
     def _render_diagnosis(self):
@@ -588,6 +600,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.reference_from.set(str(row['ref_start']))
         self.reference_to.set(str(row['ref_end']))
         self._recalculate(notify=False)
+        # Never silently reuse a power value between different CSV records.
+        self.editor_q_var.set('')
         self._render_power_tree()
         self._render_events()
         self._render_diagnosis()
@@ -601,9 +615,12 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         return self.record_rows[self.active]
 
     def _prompt_first_q(self):
+        """No blocking wizard: the visible inline Q field is the entry point."""
         if self.active is not None and not self.busy:
             self.tabs.select(self.chart_page)
-            self.set_constant_q()
+            self.editor_q_entry.focus_set()
+            self.status.set('Wpisz Q = [   ] W z dziennika, wybierz ON i kliknij na wykresie. '
+                            'Jeśli Q nie jest znana, pozostaw pole puste.')
 
     def set_constant_q(self):
         """Explicit opt-in: a number Q [W] is never inferred from temperature."""
@@ -721,6 +738,15 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 'przypisana do ON?/OFF?' if row['constant_scope'] == 'estimated'
                 else 'przypisana do całego pliku') + ' · nadpisania mają priorytet'
         self.constant_q_label.set(text)
+        t_end = (row['record'].t[-1]-row['record'].t[0])/60
+        boundary, label, operator_off = last_heating_boundary(
+            row.get('timeline_events', []), t_end)
+        self.editor_hint.set(
+            ('Ostatnia granica: '+label+f' w {boundary:.2f} min. '
+             if row.get('timeline_events') else
+             'Koniec CSV ≠ potwierdzone OFF. ')
+            + 'ON i zmiany mocy korzystają z pola Q; OFF = 0 W. '
+            'Prawy klik na wykresie otwiera menu.')
 
     def _stage_dialog(self, initial=None):
         data = initial or PowerStage(0., (self._get()['record'].t[-1] - self._get()['record'].t[0])/60., 10.)
@@ -931,7 +957,27 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 textcoords='offset points',rotation=90,fontsize=8,
                 color=manual_color,fontweight='bold')
         for stage in row['effective_stages']:
-            for axis in self.axes: axis.axvline(stage.start_min, color=COLOR['q'], ls='--', lw=.65, alpha=.5)
+            for axis in self.axes:
+                axis.axvspan(stage.start_min, stage.end_min,
+                             color=('#d6a75a' if stage.q_w > 0 else '#86b6d6'),
+                             alpha=.055, zorder=-5)
+                axis.axvline(stage.start_min, color=COLOR['q'], ls='--', lw=.65, alpha=.5)
+        # Data stop is always a boundary of the plot, but never a fabricated OFF.
+        t_end = (rec.t[-1]-t0)/60
+        terminal_off = any(item.kind == 'OFF' and abs(item.time_min-t_end)<1e-8
+                           for item in row.get('timeline_events', []))
+        if not terminal_off:
+            ax.annotate('KONIEC CSV (OFF niepotwierdzone)',
+                        xy=(t_end, .02), xycoords=ax.get_xaxis_transform(),
+                        xytext=(-4, 2), textcoords='offset points',
+                        ha='right', va='bottom', fontsize=7.5,
+                        color='#6c7d90', rotation=90)
+        else:
+            ax.annotate('OFF na końcu (operator)',
+                        xy=(t_end, .02), xycoords=ax.get_xaxis_transform(),
+                        xytext=(-4, 2), textcoords='offset points',
+                        ha='right', va='bottom', fontsize=7.5,
+                        color='#bf4a52', rotation=90)
         ax.set_ylabel('Temperatura [°C]')
         middle.set_ylabel('ΔT [K]')
         bottom.set_ylabel(title)

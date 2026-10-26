@@ -10,7 +10,7 @@ Aplikacja desktopowa dla Windows, działająca podobnie do [LiftHeightAnalyzer](
 2. Nie przenoś samego `.exe` poza katalog — folder `_internal` musi zostać obok.
 3. Dwukrotnie kliknij `3DPHPAnalyzer.exe`.
 4. Wybierz CSV / archiwum ZIP zawierające CSV lub folder pomiarów.
-5. Przy pierwszym wykresie możesz wybrać „Ustaw stałe Q…”.
+5. W polu **Q = [   ] W** wpisz nastawę grzałki (lub pozostaw puste, jeśli jej nie znasz). Okno „Ustaw stałe Q…” jest opcjonalne.
 6. Sprawdź wykryte okresy ON?/OFF? oraz popraw przedziały Q ręcznie.
 7. Zobacz wykresy i pobierz wyniki.
 
@@ -31,7 +31,7 @@ Przypisanie kanałów wynikające z eksperymentu:
 - ch4/ch5: sekcja środkowa Tm;
 - ch6/ch7: skraplacz Tc.
 
-**Konfiguracja stałej Q na pierwszym wykresie:** po wczytaniu pierwszego pomiaru pokazuje się okno z możliwością wpisania mocy w watach. Można wybrać zastosowanie Q tylko do szacowanych okresów `ON?` (wtedy `OFF?` otrzymuje założone `0 W`, a przed rozpoznaniem `ON?` i w lukach Q pozostaje nieznane) albo do **całego pliku** — ta druga opcja jest poprawna tylko przy fizycznie stałej mocy przez cały pomiar. Podczas otwierania kolejnych pomiarów można wywołać okno przyciskiem `Ustaw stałe Q…`.
+**Opcjonalna konfiguracja stałej Q:** przycisk „Ustaw stałe Q…” pozwala przypisać wartość do całego pliku albo szacowanych ON?/OFF?. Nie ma już automatycznego okna blokującego pierwszy wykres; zwykłe ON/zmiana mocy używa pola Q = [   ] W. Można wybrać zastosowanie Q tylko do szacowanych okresów `ON?` (wtedy `OFF?` otrzymuje założone `0 W`, a przed rozpoznaniem `ON?` i w lukach Q pozostaje nieznane) albo do **całego pliku** — ta druga opcja jest poprawna tylko przy fizycznie stałej mocy przez cały pomiar. Podczas otwierania kolejnych pomiarów można wywołać okno przyciskiem `Ustaw stałe Q…`.
 
 **Tabela w zakładce `Moc Q / R`:** szacowane `ON?`, `OFF?` i `P↑?` są widoczne automatycznie jako okresy robocze; przy `P↑?` zaznaczono możliwość zmiany obciążenia. Nie są to rzeczywiste dane elektryczne. Po podaniu stałej Q pojawią się wstępne wartości Q. `Nadpisz wybrany okres…` i `Dodaj nadpisanie` pozwalają zmienić Q także dla podprzedziału; ręczny wpis zawsze ma priorytet, nawet w szacowanym okresie OFF. Wykryta przerwa rejestracji kończy dotychczasową estymację stanu i następny okres pozostaje nieznany aż do nowego zdarzenia.
 
@@ -102,7 +102,7 @@ Silne przesłanki wymagają łącznie K1, K2, spadku Te ≥1°C, wzrostu Tc ≥0
 
 Eksport wybranego zawiera `ocena_aktywnosci_PHP.csv`; eksport całości dodatkowo `ocena_aktywnosci_PHP_zbiorczo.csv`. Raport HTML przedstawia ocenę obok zdarzeń i odsyła do szczegółów w CSV.
 
-**Co użytkownik może wprowadzić:** faktyczne poziomy Q i ich przedziały czasowe (najlepiej z logu zasilacza lub notatek), poprawki przedziałów, deklarację porównywalnych warunków chłodzenia. W nowych eksperymentach warto rejestrować napięcie, prąd oraz temperaturę otoczenia razem z temperaturami PHP.
+**Co użytkownik może wprowadzić:** nominalne nastawy Q [W] i czasy ich zmian według dziennika eksperymentu, poprawki przedziałów oraz deklarację porównywalnych warunków chłodzenia. **W obecnych pomiarach nie ma zarejestrowanego U ani I**. Program nie wylicza Q ze wskazań termopar ani nie wymaga podawania U/I.
 
 ## K2 po walidacji mocy i warunków chłodzenia
 
@@ -128,9 +128,9 @@ Parser CSV rozpoznaje przejścia zegara dobowego z 20:00–24:00 na 00:00–04:0
 
 1. Wczytaj CSV/ZIP. Program automatycznie wykryje robocze ON?/OFF?, O1/O2, zmiany termiczne, luki i wyniki K1/K2.
 2. Jeżeli chcesz szybko rozpocząć od zaproponowanych czasów, użyj **„Zatwierdź sugestie ON?/OFF?”** na dole zakładki **Wykresy**. Przed utworzeniem znaczników podajesz faktyczną moc Q dla sugerowanych ON? (jedną wartość, gdy taka sama). Znaczniki są oznaczone jako `accepted_thermal_estimate` i **nigdy nie stają się potwierdzonym logiem przełączeń**.
-3. Przyciskami **„Kliknij ON”**, **„Kliknij OFF”**, **„Zmień Q”** możesz zaznaczać zdarzenia bezpośrednio na wykresie. Po ON lub zmianie Q program pyta o rzeczywistą moc w W; OFF przyjmuje Q=0. Znacznik da się przesunąć przez przeciągnięcie lub przez wybranie go w tabeli i użycie **„Przesuń na wykresie”**. Można edytować Q, usuwać znaczniki i cofać zmiany.
+3. **Nowy edytor:** wpisz moc w widocznym polu **`Q = [   ] W`** (pole początkowo puste), wybierz **„ON na wykresie”** lub **„Zmień Q”** i kliknij odpowiedni czas na wykresie. **„OFF na wykresie”** nie wymaga Q i ustawia Q=0 W. **Prawy klik na wykresie** otwiera menu ON/OFF/zmiana Q. Znacznik możesz przesunąć myszką, edytować jego moc wpisując nową Q w tym samym polu, usunąć lub cofnąć. Nie wpisuj Q, której nie znasz.
 4. Program automatycznie przelicza `Q(t)`, `R_app`, `R/Rref`, K2, ocenę aktywności i wykresy. Priorytet: **ręczny przedział Q > ręczny znacznik ON/OFF/Q > automatyczne przypisanie Q według szacowanego ON?/OFF?**. Moc przed pierwszym określonym zdarzeniem pozostaje nieznana, chyba że wcześniej wybrano inną bazową stałą Q.
 5. Po korekcie aplikacja zapisuje całą konfigurację **automatycznie i atomowo na lokalnym komputerze** w katalogu `~/3DPHPAnalyzer/Sessions` (na Windows zwykle `C:\\Users\\<użytkownik>\\3DPHPAnalyzer\\Sessions`). Przy ponownym wczytaniu **tego samego pliku pomiarowego** zostanie ona automatycznie przywrócona na podstawie SHA-256 danych. Surowe CSV pozostają nienaruszone. Funkcja ręcznego importu/eksportu `konfiguracja.json` nadal działa.
 6. Eksport zawiera dodatkowy `reczne_zdarzenia_ON_OFF_Q.csv` i JSON z `timeline_events`, obok pełnego wynikowego `przedzialy_Q.csv`, metryk i metodologii.
 
-**Ważna interpretacja:** granice uzyskane z temperatur to czasy odpowiedzi cieplnej, a nie dokładne momenty zmiany stanu elektrycznego. Automatyczne propozycje to pomoc dla operatora, nie źródło prawdziwego Q. Wpisane moce traktujemy jako deklarowane nastawy, nie zmierzony strumień ciepła transportowany przez PHP.
+**Koniec pomiaru:** wykres zawsze ma granicę `KONIEC CSV`, ale to nie jest fizyczne `OFF`. Jeśli operator wie, że grzałkę wyłączono dokładnie przy ostatniej próbce, może kliknąć **„OFF na końcu CSV (potwierdź)”**; w pozostałych przypadkach koniec rejestracji pozostaje oznaczony jako `OFF niepotwierdzone`. Terminalny OFF nie tworzy fikcyjnego przedziału o zerowym czasie. Delikatne pasma na wykresie pokazują wynikowe Q>0 lub Q=0, ale wynikowy harmonogram może zawierać założenia.\n\n**Ważna interpretacja:** granice uzyskane z temperatur to czasy odpowiedzi cieplnej, a nie dokładne momenty zmiany stanu elektrycznego. Automatyczne propozycje to pomoc dla operatora, nie źródło prawdziwego Q. Wpisane moce traktujemy jako deklarowane nastawy, nie zmierzony strumień ciepła transportowany przez PHP.

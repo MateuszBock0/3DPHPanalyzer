@@ -39,8 +39,23 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
     def tearDown(self):
         self.app.destroy()
 
+    def test_inline_q_and_terminal_off(self):
+        from timeline_editor import timeline_stages
+        from power_model import PowerStage
+        self.assertEqual(self.app.editor_q_var.get(), '')
+        self.app.editor_q_var.set('12,5')
+        self.assertTrue(self.app._add_marker('ON',.5))
+        self.assertAlmostEqual(self.app._get()['results']['q'][60],12.5)
+        duration=(self.app._get()['record'].t[-1]-self.app._get()['record'].t[0])/60
+        self.assertTrue(self.app._add_marker('OFF',duration))
+        self.assertEqual(
+            timeline_stages(self.app._get()['timeline_events'],duration),
+            [PowerStage(.5,duration,12.5)])
+        self.assertEqual(len(self.app._manual_line_artists),2)
+        self.app.update()
+
     def test_manual_on_off_redraw_table_and_undo(self):
-        self.app._q_for_on=lambda kind:10.
+        self.app.editor_q_var.set('10')
         self.app._add_marker('ON',.5)
         self.app._add_marker('OFF',1.5)
         self.assertEqual(len(self.app._get()['timeline_events']),2)
