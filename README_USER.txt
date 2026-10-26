@@ -33,3 +33,25 @@ NOWE FUNKCJE
 - R/Rref wymaga jednego ciągłego odcinka dodatniej, stałej Q bez luk i OFF.
 - Raport HTML i ostatnia zakładka programu wyjaśniają wszystkie obliczenia.
 - Eksport PNG pokazuje typ trzeciego panelu wybrany w aplikacji.
+
+
+AUTO ODTWARZANIE EKSPERYMENTU (BEZ LOGU ZASILACZA)
+1. Wczytaj CSV. Program sam zaproponuje ON?/OFF? (szacowanie z temperatur).
+2. W zakladce Wykresy kliknij "Zatwierdz sugestie ON?/OFF?".
+   Wpisz moc ON w W. Mozesz tez pominac propozycje i klikac ON, OFF,
+   Zmien Q na wykresie - program zapyta o moc tylko przy ON i zmianie Q.
+3. Zielony pionowy znacznik to ON/zmiana Q, czerwony to OFF.
+   Przeciagnij pionowa linie, aby przesunac czas; albo wybierz znacznik
+   z tabeli w "Moc Q / R" i kliknij "Przesun na wykresie".
+4. Kazda zmiana od razu przelicza Q, R_app, R/Rref, K2 i raportowe CSV.
+   Kliknij "Cofnij", aby cofnac ostatnia zmiane znacznikow.
+5. Program automatycznie zapisuje ustawienia dla kazdego pomiaru w
+   katalogu uzytkownika: 3DPHPAnalyzer/Sessions. Wczytanie TEGO SAMEGO
+   CSV przywroci konfiguracje. Kopia jest tez w eksporcie konfiguracja.json.
+6. Eksport wybranego zawiera "reczne_zdarzenia_ON_OFF_Q.csv".
+   Reczne przedzialy Q maja pierwszenstwo przed znacznikami, a znaczniki
+   przed automatycznym domyslnym Q na okresach ON?/OFF?.
+
+NIE MA pomiaru U/I. Moc Q pochodzi z wpisanych przez Ciebie nastaw.
+Akceptacja ON?/OFF? z temperatur NIE potwierdza czasu elektrycznego
+przelaczenia - moze on byc opozniony przez bezwladnosc termiczna.
