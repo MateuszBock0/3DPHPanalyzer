@@ -56,6 +56,24 @@ def sections():
          'a nawet takie K2 nie stanowi dowodu ruchu czynnika ani wzrostu '
          'sprawności PHP. Zielony kolor wykresu dotyczy wyłącznie tego '
          'warunkowego statusu; pozostałe epizody są pomarańczowe.'),
+        ('Przesłanki aktywności PHP — oddzielna diagnoza',
+         'Zakładka Czy PHP pracuje? rozpatruje jedynie epizody oscylacyjne K1. '
+         'Porównuje medianę Te i Tc z 6–1 min przed początkiem O1/O2 '
+         'z medianą od około 30 s po początku do maksymalnie 10 min '
+         'aktywności. Brak co najmniej 90 s odniesienia albo luka '
+         'uniemożliwiają weryfikację tej reakcji. '
+         'Spadek Te o co najmniej 1°C i wzrost Tc o co najmniej 0,5°C '
+         'stanowią roboczą przesłankę zgodnego transportu ciepła; '
+         'nie są pomiarem przepływu. K2 wymaga co najmniej 15% '
+         'zmniejszenia ΔT przez 5 min. Do silnych przesłanek potrzebne '
+         'są dodatkowo K2, ręcznie zadeklarowana stała moc Q dla całego '
+         'porównania lub wyraźna deklaracja stałego Q w całym CSV, '
+         'potwierdzenie z dziennika podobnych warunków chłodzenia '
+         'i brak skoków termopar >5°C/próbkę. Q przypisana na podstawie '
+         'ON? nie wystarcza do tego statusu. Wahania przy zmianie Q, '
+         'brakach danych lub anomaliach czujników są niejednoznaczne. '
+         'Statusy to jakościowe przesłanki, a nie skalibrowane '
+         'prawdopodobieństwa ani potwierdzenie ruchu czynnika.'),
         ('Szacowanie ON?, OFF? i P↑?',
          f'Analizowane są spójne trendy Te i Tc w oknie około '
          f'{engine.HEAT_CHANGE_WINDOW_S} s; mocniejszy wzrost sugeruje ON?, '

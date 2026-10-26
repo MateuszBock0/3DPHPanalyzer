@@ -1252,7 +1252,7 @@ def write_png(r: Analysis, directory: Path, *, bottom_values=None,
 
 
 def render_html(analyses, summaries, events, plot_index, ignored, bad,
-                *, desktop_mode=False, panel_label=None, methodology_html=''):
+                *, desktop_mode=False, panel_label=None, methodology_html='', activity_reviews=None):
     st='''<style>
     :root{font-family:Segoe UI,Arial,sans-serif;color:#203448;background:#f5f7fa}
     body{max-width:1450px;margin:0 auto;padding:32px 22px;line-height:1.53}
@@ -1299,6 +1299,9 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
           '<li><b>Szare pasmo „BRAK DANYCH”:</b> brak rejestracji. Brak ciągłości pomiaru; nie interpretować okresu wewnątrz pasma jako pracy lub studzenia PHP.</li>',
           '</ul><p class="muted">Lokalna baza ΔT: okno od 6 do 1 minuty przed zdarzeniem. '
           'Progi mają charakter roboczy, wymagają walidacji; bez zsynchronizowanego logu mocy nie można potwierdzić K0.</p></section>']
+    if desktop_mode and activity_reviews is not None:
+        out.append('<p><a href="ocena_aktywnosci_PHP_zbiorczo.csv">Ocena przesłanek aktywności PHP — CSV</a>. '
+                   'Statusy są jakościowe; nie potwierdzają przepływu czynnika.</p>')
     byfile={}
     for e in events:
         if e['status']!='THERMAL_TRANSIENT':
@@ -1308,6 +1311,9 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
         out+=['<section class="panel" id="'+xml(safe_name(name))+'">',
               '<h2>'+xml(name)+'</h2>',
               '<p class="muted">Źródło: '+xml(r.record.origin)+'</p>',
+              ('<p><a href="'+xml(safe_name(Path(name).stem))+
+               '/ocena_aktywnosci_PHP.csv">Ocena aktywności PHP, przesłanki i braki — CSV</a></p>'
+               if desktop_mode and activity_reviews is not None else ''),
               '<p><a href="'+xml(png)+'">Otwórz wykres PNG</a> · '+
               ('<a href="'+xml(safe_name(Path(name).stem))+'/moc_i_opor.csv">Q i R CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/przebieg_analityczny.csv">Przebieg liczbowy CSV</a> · '
@@ -1326,12 +1332,17 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
                 out.append('<tr><td>'+typ+'</td><td>'+fmt(h.time/60)+'</td><td>'+btxt+'</td><td>'+fmt(h.t_before)+'</td><td>'+fmt(h.t_after)+'</td><td>'+method+'</td></tr>')
             out.append('</table></div>')
         if byfile.get(name):
-            out.append('<h3>Epizody oscylacyjne O1, O2…</h3><div class="scroll"><table><tr><th>Nr</th><th>Od [min]</th><th>Do [min]</th><th>Czas [min]</th><th>Od ON? [min]</th><th>Redukcja ΔT [%]</th><th>Ocena</th><th>PNG</th></tr>')
+            extra_header = '<th>Przesłanki pracy PHP?</th>' if activity_reviews is not None else ''
+            out.append('<h3>Epizody oscylacyjne O1, O2…</h3><div class="scroll"><table><tr><th>Nr</th><th>Od [min]</th><th>Do [min]</th><th>Czas [min]</th><th>Od ON? [min]</th><th>Redukcja ΔT [%]</th><th>Ocena K1/K2</th>'+extra_header+'<th>PNG</th></tr>')
             for e in byfile[name]:
                 ident=e['epizod']
                 vals=[ident,e['poczatek_min_od_csv'],e['koniec_min_od_csv'],e['czas_trwania_min'],e['czas_od_szacowanego_ON_min'],e['redukcja_DeltaT_pct'],e['status']]
                 matching=next((z for z in zooms if '_'+ident+'_zblizenie.png' in z),'')
+                activity = activity_reviews.get((name, ident)) if activity_reviews else None
+                activity_cell = ('<td>'+cell(activity.label)+'</td>' if activity is not None
+                                 else '<td>—</td>') if activity_reviews is not None else ''
                 out.append('<tr>'+''.join('<td>'+cell(x)+'</td>' for x in vals)+
+                           activity_cell +
                            '<td>'+('<a href="'+xml(matching)+'">Powiększ</a>' if matching else '')+'</td></tr>')
             out.append('</table></div>')
         else:
