@@ -615,9 +615,12 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         return self.record_rows[self.active]
 
     def _prompt_first_q(self):
+        """No blocking wizard: the visible inline Q field is the entry point."""
         if self.active is not None and not self.busy:
             self.tabs.select(self.chart_page)
-            self.set_constant_q()
+            self.editor_q_entry.focus_set()
+            self.status.set('Wpisz Q = [   ] W z dziennika, wybierz ON i kliknij na wykresie. '
+                            'Jeśli Q nie jest znana, pozostaw pole puste.')
 
     def set_constant_q(self):
         """Explicit opt-in: a number Q [W] is never inferred from temperature."""
