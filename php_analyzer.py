@@ -933,7 +933,7 @@ def _nice_ylim(values, pad=0.06, min_span=1.0):
 
 def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end_s: float | None = None,
                   *, bottom_values=None, bottom_label=None, bottom_level_one=False,
-                  episode_reviews=None):
+                  episode_reviews=None, operator_events=()):
     """Jednolity PNG: naglowek, trzy osobne panele i osobna stopka.
 
     Wszystkie opisy, legendy i podpis osi X maja zarezerwowane miejsce,
@@ -1087,6 +1087,20 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
                      textcoords='offset points', ha='left', va='top', fontsize=9,
                      color=shade, rotation=90, fontweight='bold')
 
+    # Operator-confirmed or edited markers: separate from dotted thermal guesses.
+    # The legacy PNG engine plots absolute PicoLog seconds / 60, therefore
+    # a user-relative marker needs the original CSV start as an offset.
+    for marker in operator_events:
+        when = t[0]/60 + marker.time_min
+        if not xmin/60 <= when <= xmax/60:
+            continue
+        color = '#167957' if marker.kind != 'OFF' else '#BF4A52'
+        for axis in axes:
+            axis.axvline(when, color=color, lw=1.6, alpha=.95, zorder=7)
+        name = 'ON' if marker.kind=='ON' else 'OFF' if marker.kind=='OFF' else 'Q'
+        ax1.annotate(name,xy=(when,.62),xycoords=ax1.get_xaxis_transform(),
+                     xytext=(3,0),textcoords='offset points',color=color,
+                     rotation=90,fontweight='bold',fontsize=9,ha='left')
     for j, values in enumerate(individual):
         color = COL['ev'] if j < 2 else COL['middle'] if j < 4 else COL['co']
         ax1.plot(display_x, visible(values), lw=0.75, color=color, alpha=0.28)
@@ -1233,12 +1247,13 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
     return path
 
 def write_png(r: Analysis, directory: Path, *, bottom_values=None,
-              bottom_label=None, bottom_level_one=False, episode_reviews=None):
+              bottom_label=None, bottom_level_one=False, episode_reviews=None,
+              operator_events=()):
     base = safe_name(Path(r.record.name).stem)
     general = directory / f'{base}_analiza.png'
     make_plot_png(r, general, bottom_values=bottom_values,
                   bottom_label=bottom_label, bottom_level_one=bottom_level_one,
-                  episode_reviews=episode_reviews)
+                  episode_reviews=episode_reviews,operator_events=operator_events)
     zoom = []
     for ep in r.episodes:
         if not ep.oscillatory:
@@ -1246,7 +1261,8 @@ def write_png(r: Analysis, directory: Path, *, bottom_values=None,
         p = directory / f'{base}_{ep.display_id}_zblizenie.png'
         make_plot_png(r, p, ep.start - 300, ep.end + 300,
                       bottom_values=bottom_values, bottom_label=bottom_label,
-                      bottom_level_one=bottom_level_one, episode_reviews=episode_reviews)
+                      bottom_level_one=bottom_level_one, episode_reviews=episode_reviews,
+                      operator_events=operator_events)
         zoom.append(p)
     return general, zoom
 
@@ -1317,6 +1333,7 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
               '<p><a href="'+xml(png)+'">Otwórz wykres PNG</a> · '+
               ('<a href="'+xml(safe_name(Path(name).stem))+'/moc_i_opor.csv">Q i R CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/przebieg_analityczny.csv">Przebieg liczbowy CSV</a> · '
+               '<a href="'+xml(safe_name(Path(name).stem))+'/reczne_zdarzenia_ON_OFF_Q.csv">Ręczne ON/OFF/Q CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/konfiguracja.json">Konfiguracja JSON</a></p>'
                if desktop_mode else
                '<a href="przebiegi/'+xml(safe_name(Path(name).stem))+'_przebieg.csv">Przebieg liczbowy CSV</a></p>'),
