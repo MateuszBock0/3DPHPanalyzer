@@ -4,7 +4,8 @@ import hashlib
 import math
 import struct
 from dataclasses import asdict
-from power_model import PowerStage, calculate, effective_stages, validate
+from power_model import PowerStage, calculate, validate
+from timeline_editor import Transition, validate_transitions, resolve_schedule
 
 class LegacyConfigurationError(ValueError):
     """Older configuration cannot be verified automatically."""
@@ -23,9 +24,10 @@ def export_configuration(row):
     r = row['record']
     result = row['results']
     return {
-        'schema_version': 3, 'filename': r.name, 'source': r.origin,
+        'schema_version': 4, 'filename': r.name, 'source': r.origin,
         'source_identity': record_identity(r),
         'manual_overrides': [asdict(s) for s in row['stages']],
+        'timeline_events': [asdict(s) for s in row.get('timeline_events', [])],
         'estimated_periods': [asdict(p) for p in row['periods']],
         'constant_q_W': row['constant_q'],
         'constant_q_scope': row['constant_scope'],
@@ -92,6 +94,20 @@ def validated_import(config, row, *, legacy_confirmed=False):
     duration = (record.t[-1] - record.t[0]) / 60
     if any(stage.end_min > duration + 1e-8 for stage in overrides):
         raise ValueError('Nadpisanie Q wykracza poza czas pomiaru.')
+    raw_events = config.get('timeline_events', [])
+    if not isinstance(raw_events, list):
+        raise ValueError('timeline_events musi być listą.')
+    timeline = []
+    for event in raw_events:
+        if not isinstance(event, dict):
+            raise ValueError('Znacznik ON/OFF/Q musi być obiektem.')
+        kind = event.get('kind')
+        value = event.get('q_w')
+        timeline.append(Transition(
+            _number(event.get('time_min'), 'Czas znacznika'), kind,
+            _number(value, 'Q znacznika') if value is not None else None,
+            event.get('source', 'operator')))
+    timeline = validate_transitions(timeline, duration) if timeline else []
     enabled = config.get('reference_enabled', False)
     if type(enabled) is not bool:
         raise ValueError('reference_enabled musi być true/false.')
@@ -99,12 +115,13 @@ def validated_import(config, row, *, legacy_confirmed=False):
     end = _number(config.get('reference_end_min', 10), 'Rref do')
     if start < 0 or end <= start or (enabled and end > duration + 1e-9):
         raise ValueError('Niepoprawne okno referencji.')
-    resolved = effective_stages(row['periods'], constant, overrides, duration, scope)
+    resolved = resolve_schedule(row['periods'], constant, overrides, duration, scope, timeline)
     result = calculate(record.t, row['analysis'].delta, resolved,
                        (start, end) if enabled else None)
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
-    return {'stages': overrides, 'constant_q': constant, 'constant_scope': scope,
+    return {'stages': overrides, 'timeline_events': timeline,
+            'constant_q': constant, 'constant_scope': scope,
             'cooling_confirmed': cooling_confirmed,
             'ref_enabled': enabled, 'ref_start': start, 'ref_end': end,
             'effective_stages': resolved, 'results': result}
