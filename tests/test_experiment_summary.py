@@ -55,7 +55,7 @@ class SummaryModelTests(unittest.TestCase):
                                            'operator_adjusted')]))
         self.assertEqual(overview.first_from_on_min,2.5)
         self.assertIn('szacunek',overview.on_provenance)
-        self.assertIsNone(overview.episodes[0].delta_before_k is None and None)
+        self.assertEqual(overview.episodes[0].delta_before_k,50.)
 
     def test_off_cancels_previous_on_and_blocks_resurrection(self):
         overview=build_experiment_summary(fixture(
