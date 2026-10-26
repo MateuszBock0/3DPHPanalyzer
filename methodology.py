@@ -64,7 +64,10 @@ def sections():
          'braków danych. Nawet krótki OFF, zmiana Q lub Q nieznane '
          'unieważniają referencję. R_ref=mediana R_app w oknie [K/W]. '
          'R/R_ref(t)=R_app(t)/R_ref tylko przy tym samym Q co okno referencji. '
-         'Kryterium ciągłości nie gwarantuje fizycznego stanu ustalonego.'),
+         'W aplikacji, gdzie dostępne są Te i Tc, okno musi ponadto trwać co najmniej 120 s, '
+         'a trend obu temperatur nie może przekraczać 0,50 °C/min. '
+         'Trend jest oszacowany z median pierwszej i ostatniej ćwiartki okna. '
+         'To pomocnicze kryterium quasi-ustalone, nie uniwersalna granica fizyczna.'),
         ('Proxy względne i RMS',
          'Proxy=ΔT_wygładzone/ΔT_ref z lokalnej bazy w oszacowanym cyklu. '
          'Referencją jest baza przed oscylacją albo 90. percentyl spokojnego '
