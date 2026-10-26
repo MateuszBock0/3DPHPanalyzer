@@ -5,7 +5,10 @@ import math
 import struct
 from dataclasses import asdict
 from power_model import PowerStage, calculate, validate
-from timeline_editor import Transition, validate_transitions, resolve_schedule
+from timeline_editor import (Transition, validate_transitions, resolve_schedule,
+                             ThermalSuggestion, validate_suggestions, suggested_heating_events)
+from power_model import derive_estimated_periods
+import php_analyzer as engine
 
 class LegacyConfigurationError(ValueError):
     """Older configuration cannot be verified automatically."""
@@ -24,10 +27,11 @@ def export_configuration(row):
     r = row['record']
     result = row['results']
     return {
-        'schema_version': 4, 'filename': r.name, 'source': r.origin,
+        'schema_version': 5, 'filename': r.name, 'source': r.origin,
         'source_identity': record_identity(r),
         'manual_overrides': [asdict(s) for s in row['stages']],
         'timeline_events': [asdict(s) for s in row.get('timeline_events', [])],
+        'thermal_suggestions': [asdict(s) for s in row.get('thermal_suggestions', [])],
         'estimated_periods': [asdict(p) for p in row['periods']],
         'constant_q_W': row['constant_q'],
         'constant_q_scope': row['constant_scope'],
@@ -108,6 +112,24 @@ def validated_import(config, row, *, legacy_confirmed=False):
             _number(value, 'Q znacznika') if value is not None else None,
             event.get('source', 'operator')))
     timeline = validate_transitions(timeline, duration) if timeline else []
+    # Legacy v4 configurations did not store editable thermal boundaries.
+    raw_suggestions = config.get('thermal_suggestions')
+    if raw_suggestions is None:
+        suggestions = list(row.get('thermal_suggestions', []))
+        periods = row['periods']
+    else:
+        if not isinstance(raw_suggestions, list) or len(raw_suggestions) > 10000:
+            raise ValueError('thermal_suggestions musi być listą o rozsądnym rozmiarze.')
+        suggestions = validate_suggestions([
+            ThermalSuggestion(_number(x.get('time_min'), 'Czas sugestii'),
+                              x.get('kind'), x.get('source', 'automatic'))
+            for x in raw_suggestions if isinstance(x, dict)
+        ], duration)
+        if len(suggestions) != len(raw_suggestions):
+            raise ValueError('Każda sugestia musi być obiektem.')
+        _seg, gaps = engine.recording_segments(record.t)
+        periods = derive_estimated_periods(record.t,
+            suggested_heating_events(suggestions, record.t[0]), gaps)
     enabled = config.get('reference_enabled', False)
     if type(enabled) is not bool:
         raise ValueError('reference_enabled musi być true/false.')
@@ -115,12 +137,13 @@ def validated_import(config, row, *, legacy_confirmed=False):
     end = _number(config.get('reference_end_min', 10), 'Rref do')
     if start < 0 or end <= start or (enabled and end > duration + 1e-9):
         raise ValueError('Niepoprawne okno referencji.')
-    resolved = resolve_schedule(row['periods'], constant, overrides, duration, scope, timeline)
+    resolved = resolve_schedule(periods, constant, overrides, duration, scope, timeline)
     result = calculate(record.t, row['analysis'].delta, resolved,
                        (start, end) if enabled else None)
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'stages': overrides, 'timeline_events': timeline,
+            'thermal_suggestions': suggestions, 'periods': periods,
             'constant_q': constant, 'constant_scope': scope,
             'cooling_confirmed': cooling_confirmed,
             'ref_enabled': enabled, 'ref_start': start, 'ref_end': end,
