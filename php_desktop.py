@@ -1041,7 +1041,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         values, label, level = self._bottom_panel_export(row)
         engine.write_png(a, plotdir, bottom_values=values,
                          bottom_label=label, bottom_level_one=level,
-                         episode_reviews=row['k2_reviews'])
+                         episode_reviews=row['k2_reviews'],
+                         operator_events=row.get('timeline_events', []))
         (folder/'panel_wykresu.txt').write_text(
             'Trzeci panel: ' + label + '\nQ jest wpisywana przez operatora. '
             'ON?/OFF? to estymacja z temperatur.\n', encoding='utf-8')
