@@ -121,10 +121,34 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._drag_suggestion_index = None
         self._suggestion_line_artists = {}
         self._last_plot_record = None
+        self._poll_after_id = None
+        self._first_q_after_id = None
         self._drag_lines = []
         self._manual_line_artists = {}
         self._build_ui()
-        self.after(160, self._poll)
+        self._poll_after_id = self.after(160, self._poll)
+
+    def destroy(self):
+        # Cancel callbacks before Tcl widgets cease to exist. Repeated Xvfb
+        # smoke tests previously logged "invalid command name _poll/idle_draw"
+        # even when every test asserted successfully.
+        for ident in (self._poll_after_id, self._first_q_after_id):
+            if ident is not None:
+                try:
+                    self.after_cancel(ident)
+                except tk.TclError:
+                    pass
+        self._poll_after_id = self._first_q_after_id = None
+        canvas = getattr(self, 'canvas', None)
+        if canvas is not None:
+            ident = getattr(canvas, '_idle_draw_id', None)
+            if ident is not None:
+                try:
+                    canvas.get_tk_widget().after_cancel(ident)
+                except tk.TclError:
+                    pass
+                canvas._idle_draw_id = None
+        super().destroy()
 
     def _configure_style(self):
         style = ttk.Style(self)
@@ -824,7 +848,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                         if not self._first_q_dialog_done:
                             self._first_q_dialog_done = True
                             if not self._get()['session_restored']:
-                                self.after(650, self._prompt_first_q)
+                                self._first_q_after_id = self.after(650, self._prompt_first_q)
                     self.status.set(f'Wczytano {added} pomiarów. ' + (f'Ostrzeżenia: {len(errors)}.' if errors else ''))
                     if errors:
                         messagebox.showwarning('Pominięte dane / ostrzeżenia', '\n'.join(errors[:12]))
@@ -833,7 +857,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     messagebox.showerror('Błąd', rest[0][:5000])
         except queue.Empty:
             pass
-        self.after(160, self._poll)
+        self._poll_after_id = self.after(160, self._poll)
 
     def _select(self, *_):
         idx = self.listbox.curselection()

@@ -11,6 +11,8 @@ from math import isfinite
 from statistics import median
 
 from episode_validation import stable_positive_power
+from timeline_editor import operator_marker_stages
+import php_analyzer as engine
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,19 @@ class ExperimentSummary:
     episodes: tuple[EpisodeSummary, ...]
 
 
+def _safe_startup_offset(row, first_start_min, anchor_min, provenance):
+    """Unobserved logger intervals invalidate measured startup latency."""
+    if anchor_min is None:
+        return None, provenance
+    t0 = row['record'].t[0]
+    anchor_s = t0 + 60*anchor_min
+    episode_s = t0 + 60*first_start_min
+    _segments, gaps = engine.recording_segments(row['record'].t)
+    if any(a < episode_s and b > anchor_s for a, b in gaps):
+        return None, 'Luka rejestracji między ON/ON? a O1 — czas od ON niezweryfikowany'
+    return first_start_min-anchor_min, provenance
+
+
 def _startup_anchor(row, first_start_min):
     """Use an ON only if no later OFF cancels it before the first O1.
 
@@ -66,7 +81,7 @@ def _startup_anchor(row, first_start_min):
             origin = ('ON wpisany przez operatora' if ev.source == 'operator'
                       else 'ON? z zaakceptowanej sugestii termicznej')
     if anchor is not None:
-        return first_start_min-anchor, origin
+        return _safe_startup_offset(row, first_start_min, anchor, origin)
     # If the operator explicitly registered an OFF and no later ON,
     # do not silently resurrect a guessed thermal start.
     if any(ev.kind == 'OFF' for ev in events):
@@ -82,7 +97,8 @@ def _startup_anchor(row, first_start_min):
             guess = None
     if guess is None:
         return None, 'Nieznany początek grzania'
-    return first_start_min-guess, 'Od ON? (reakcja cieplna, wyłącznie szacunek)'
+    return _safe_startup_offset(row, first_start_min, guess,
+        'Od ON? (reakcja cieplna, wyłącznie szacunek)')
 
 
 def _q_overview(row):
@@ -121,9 +137,15 @@ def _r_in_first_episode(row, first):
     manual = any(s.start_min <= a+1e-7 and s.end_min >= b-1e-7
                  and abs(s.q_w-q)<1e-9
                  for s in row.get('stages', []))
-    marker = any(ev.kind=='ON' and ev.source=='operator' and
-                 ev.time_min <= a+1e-7 for ev in row.get('timeline_events', []))
-    declared_full = row.get('constant_scope')=='full' and row.get('constant_q') is not None
+    # A historical operator ON may have been followed by OFF. It must
+    # never certify an unrelated, later Q derived from ON? estimates.
+    duration=(row['record'].t[-1]-t0)/60
+    operator_stages=operator_marker_stages(row.get('timeline_events', []), duration)
+    marker = any(s.start_min <= a+1e-7 and s.end_min >= b-1e-7
+                 and abs(s.q_w-q)<1e-9 for s in operator_stages)
+    constant_q=row.get('constant_q')
+    declared_full=(row.get('constant_scope')=='full' and constant_q is not None
+                   and abs(constant_q-q)<1e-9)
     provenance = ('ręcznie wpisanej' if manual or marker or declared_full
                   else 'szacunkowo przypisanej')
     return (f'{median(values):.3g} K/W',
@@ -155,7 +177,9 @@ def build_experiment_summary(row):
         delta_detail='Brak wykrytego O1; nie oznacza to braku przepływu czynnika.'
         first_from_on, origin=None,'Brak epizodu oscylacyjnego O1'
     else:
-        if first.reduction_pct is None or not isfinite(first.reduction_pct):
+        if (first.reduction_pct is None or not isfinite(first.reduction_pct)
+                or first.baseline is None or not isfinite(first.baseline)
+                or first.median_delta is None or not isfinite(first.median_delta)):
             delta_display='—'
             delta_detail='Brak wiarygodnej lokalnej bazy ΔT przed O1.'
         else:
