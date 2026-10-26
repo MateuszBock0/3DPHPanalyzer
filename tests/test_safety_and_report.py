@@ -47,6 +47,32 @@ class StrictReferenceTests(unittest.TestCase):
         out=calculate([0,180,450,660],[40.]*4,stages)
         self.assertEqual(out['q'],[None,20,30,0])
 
+class QuasiSteadyReferenceTests(unittest.TestCase):
+    def test_quiet_temperatures_allow_reference(self):
+        times=list(range(601))
+        stages=[PowerStage(0,10,20)]
+        result=calculate(times,[40.]*601,stages,(2,6),
+                         te=[80.]*601,tc=[40.]*601)
+        self.assertIsNone(result['reference_error'])
+        self.assertAlmostEqual(result['r_ref'],2.)
+
+    def test_warmup_drift_rejected_by_desktop(self):
+        times=list(range(601))
+        te=[40.+.05*i for i in times]  # 3 °C/min warmup
+        tc=[25.]*601
+        result=calculate(times,[x-25 for x in te],[PowerStage(0,10,20)],
+                         (2,6),te=te,tc=tc)
+        self.assertIsNone(result['r_ref'])
+        self.assertIn('trend Te/Tc',result['reference_error'])
+
+    def test_short_reference_requires_at_least_120_seconds(self):
+        times=list(range(601))
+        result=calculate(times,[40.]*601,[PowerStage(0,10,20)],
+                         (2,3),te=[80.]*601,tc=[40.]*601)
+        self.assertIsNone(result['r_ref'])
+        self.assertIn('120 s',result['reference_error'])
+
+
 class ConfigTests(unittest.TestCase):
     def setUp(self):
         ts=list(range(601))
