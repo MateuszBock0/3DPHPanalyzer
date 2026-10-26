@@ -936,7 +936,7 @@ def _nice_ylim(values, pad=0.06, min_span=1.0):
 
 def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end_s: float | None = None,
                   *, bottom_values=None, bottom_label=None, bottom_level_one=False,
-                  episode_reviews=None, operator_events=()):
+                  episode_reviews=None, operator_events=(), thermal_suggestions=None):
     """Jednolity PNG: naglowek, trzy osobne panele i osobna stopka.
 
     Wszystkie opisy, legendy i podpis osi X maja zarezerwowane miejsce,
@@ -1069,8 +1069,24 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
 
     # Jeśli ON i OFF są blisko siebie, rozsuń ich pionowe podpisy,
     # zamiast układać je obok siebie w tym samym miejscu.
-    visible_heat = [e for e in r.heating_events
-                    if xmin <= e.time <= xmax and e.kind != 'HEATING_INCREASE_EST']
+    if thermal_suggestions is None:
+        visible_heat = [e for e in r.heating_events
+                        if xmin <= e.time <= xmax and e.kind != 'HEATING_INCREASE_EST']
+    else:
+        from types import SimpleNamespace
+        visible_heat=[]
+        for suggestion in thermal_suggestions:
+            moment=t[0]+60*suggestion.time_min
+            if not xmin <= moment <= xmax or suggestion.kind=='HEATING_INCREASE_EST':
+                continue
+            raw=next((e for e in r.heating_events if e.kind==suggestion.kind
+                      and abs(e.time-moment)<1e-5),None)
+            unchanged=suggestion.source=='automatic' and raw is not None
+            visible_heat.append(SimpleNamespace(
+                time=moment,kind=suggestion.kind,
+                source=suggestion.source,
+                band_start=raw.band_start if unchanged else None,
+                band_end=raw.band_end if unchanged else None))
     for k, ev in enumerate(visible_heat):
         is_on=ev.kind=='HEATING_ON_EST'
         shade='#5A6783' if is_on else '#8472A3'
@@ -1079,13 +1095,16 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
                 ax.axvspan((ev.band_start-t[0])/60, (ev.band_end-t[0])/60,
                            facecolor=shade, alpha=0.14, lw=0)
                 # Dwie krawędzie strefy niepewności reakcji temperaturowej.
-                ax.axvline(ev.band_start/60,color=shade,lw=0.8,alpha=0.6,linestyle=':')
-                ax.axvline(ev.band_end/60,color=shade,lw=0.8,alpha=0.6,linestyle=':')
+                ax.axvline((ev.band_start-t[0])/60,color=shade,lw=0.8,alpha=0.6,linestyle=':')
+                ax.axvline((ev.band_end-t[0])/60,color=shade,lw=0.8,alpha=0.6,linestyle=':')
             else:
                 ax.axvline((ev.time-t[0])/60, color=shade, linestyle=':', lw=1.2, alpha=0.6)
         near_prev = k>0 and ev.time-visible_heat[k-1].time < 7*60
         y_label = 0.75 if near_prev else 0.94
-        ax1.annotate('ON?' if is_on else 'OFF?', xy=(ev.time/60, y_label),
+        label=('ON?' if is_on else 'OFF?')
+        if getattr(ev,'source','automatic')!='automatic':
+            label+=' (korekta)'
+        ax1.annotate(label, xy=((ev.time-t[0])/60, y_label),
                      xycoords=ax1.get_xaxis_transform(), xytext=(4,0),
                      textcoords='offset points', ha='left', va='top', fontsize=9,
                      color=shade, rotation=90, fontweight='bold')
@@ -1249,12 +1268,13 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
 
 def write_png(r: Analysis, directory: Path, *, bottom_values=None,
               bottom_label=None, bottom_level_one=False, episode_reviews=None,
-              operator_events=()):
+              operator_events=(), thermal_suggestions=None):
     base = safe_name(Path(r.record.name).stem)
     general = directory / f'{base}_analiza.png'
     make_plot_png(r, general, bottom_values=bottom_values,
                   bottom_label=bottom_label, bottom_level_one=bottom_level_one,
-                  episode_reviews=episode_reviews,operator_events=operator_events)
+                  episode_reviews=episode_reviews,operator_events=operator_events,
+                  thermal_suggestions=thermal_suggestions)
     zoom = []
     for ep in r.episodes:
         if not ep.oscillatory:
@@ -1263,7 +1283,8 @@ def write_png(r: Analysis, directory: Path, *, bottom_values=None,
         make_plot_png(r, p, ep.start - 300, ep.end + 300,
                       bottom_values=bottom_values, bottom_label=bottom_label,
                       bottom_level_one=bottom_level_one, episode_reviews=episode_reviews,
-                      operator_events=operator_events)
+                      operator_events=operator_events,
+                      thermal_suggestions=thermal_suggestions)
         zoom.append(p)
     return general, zoom
 
@@ -1335,6 +1356,7 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
               ('<a href="'+xml(safe_name(Path(name).stem))+'/moc_i_opor.csv">Q i R CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/przebieg_analityczny.csv">Przebieg liczbowy CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/reczne_zdarzenia_ON_OFF_Q.csv">Ręczne ON/OFF/Q CSV</a> · '
+               '<a href="'+xml(safe_name(Path(name).stem))+'/sugestie_ON_OFF_po_korekcie.csv">Korekty ON?/OFF? CSV</a> · '+
                '<a href="'+xml(safe_name(Path(name).stem))+'/konfiguracja.json">Konfiguracja JSON</a></p>'
                if desktop_mode else
                '<a href="przebiegi/'+xml(safe_name(Path(name).stem))+'_przebieg.csv">Przebieg liczbowy CSV</a></p>'),
