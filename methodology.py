@@ -89,6 +89,25 @@ def sections():
          'wartościach w obrębie jednego okresu. Opcja „cały plik” '
          'przypisuje stałą Q również poza ON? i jest poprawna tylko jeśli '
          'tak faktycznie pracowała grzałka. Ręczne etapy są nadrzędne.'),
+        ('Interaktywna rekonstrukcja grzania i automatyczny zapis sesji',
+         'Po odczycie CSV program generuje szacowane z temperatur ON?/OFF? '
+         'oraz ewentualne P↑?. Operator może zaakceptować sugestie ON?/OFF? '
+         'jednym przyciskiem lub klikać ręcznie ON, OFF i zmianę Q w osi '
+         'czasu Matplotlib. Po zdarzeniu ON / zmianie Q wpisuje prawdziwą '
+         'nastawę elektryczną Q>0, OFF ustawia Q=0. Znacznik definiuje '
+         'Q od jego czasu do następnego znacznika lub końca pomiaru. '
+         'Wartość przed pierwszym znacznikiem nie jest automatycznie znana. '
+         'Priorytet: ręczny przedział Q > ręczny znacznik > automatyczny '
+         'harmonogram oparty na szacowanych okresach ON?/OFF?. '
+         'Zaakceptowane sugestie pozostają oznaczone jako '
+         'accepted_thermal_estimate, a samodzielne kliknięcie operatora '
+         'jako operator. Żadne z tych oznaczeń nie jest potwierdzeniem '
+         'elektrycznym lub pomiarem U/I. Wykres nie pozwala tworzyć '
+         'znaczników w dużych lukach rejestracji bez sąsiednich próbek. '
+         'Zmiany powodują ponowne obliczenie Q, R i ocen aktywności. '
+         'Program zapisuje atomowo konfigurację JSON z odciskiem SHA-256 '
+         'danych w lokalnym folderze 3DPHPAnalyzer/Sessions w katalogu '
+         'użytkownika i automatycznie ją przywraca dla identycznego CSV.'),
         ('Pozorny opór cieplny R_app',
          'R_app(t)=[Te(t)−Tc(t)]/Q(t) [K/W] tylko przy znanej dodatniej mocy Q. '
          'Dla Q=0 lub Q nieznanej wynik jest pusty. '
