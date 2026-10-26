@@ -6,8 +6,9 @@
 4. Wybierz pliki CSV, ZIP z CSV lub folder eksperymentow.
 5. W zakladce Wykresy ogladasz temperatury, DeltaT, R/proxy lub RMS.
 6. W zakladce Epizody/ON?OFF? sa kandydaci oscylacji i szacowane zmiany cieplne.
-7. Po wczytaniu pierwszego pomiaru pojawia sie okno "Ustaw stale Q".
-   Wpisz rzeczywista moc [W] i wybierz: tylko wykryte ON?/OFF? lub caly plik.
+7. Po otwarciu pierwszego pomiaru pole Q = [   ] W jest puste.
+   Wpisz nominalna moc [W] z notatek i kliknij ON na wykresie.
+   Opcjonalnie przycisk Ustaw stale Q konfiguruje caly plik.
 8. W zakladce Moc Q/R sa szacowane okresy ON?/OFF?, nawet bez Q.
    Mozesz kliknac "Nadpisz wybrany okres" albo "Dodaj nadpisanie",
    aby zmienic Q na konkretnym fragmencie. Reczne Q ma pierwszenstwo.
