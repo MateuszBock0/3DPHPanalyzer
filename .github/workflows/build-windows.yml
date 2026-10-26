@@ -1,0 +1,79 @@
+name: Build Python desktop app for Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install "matplotlib>=3.8,<4"
+      - name: Syntax check and unit tests
+        run: |
+          python -m compileall -q php_desktop.py php_analyzer.py power_model.py
+          python -m unittest discover -s tests -v
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build requirements
+        run: python -m pip install -r requirements.txt
+      - name: Build standalone application
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name 3DPHPAnalyzer --collect-all matplotlib php_desktop.py
+      - name: Include user documentation and input folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force 'dist\3DPHPAnalyzer\Experiments' | Out-Null
+          Copy-Item README_USER.txt 'dist\3DPHPAnalyzer\README_USER.txt'
+      - name: Verify EXE and dependencies
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'dist\3DPHPAnalyzer\3DPHPAnalyzer.exe')) { throw 'EXE missing' }
+          if (!(Test-Path 'dist\3DPHPAnalyzer\_internal')) { throw 'PyInstaller dependencies missing' }
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'dist\3DPHPAnalyzer' -DestinationPath '3DPHPAnalyzer_Windows_x64.zip' -CompressionLevel Optimal
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3DPHPAnalyzer-Windows-x64
+          path: 3DPHPAnalyzer_Windows_x64.zip
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish latest downloadable release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create latest --target "${{ github.sha }}" --title '3D PHP Analyzer — najnowsza wersja Windows' --notes 'Automatycznie zbudowana wersja przenośna; rozpakuj ZIP i uruchom 3DPHPAnalyzer.exe.' --prerelease
+          }
+          gh release upload latest 3DPHPAnalyzer_Windows_x64.zip --clobber
+      - name: Publish versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" 3DPHPAnalyzer_Windows_x64.zip --title "3D PHP Analyzer ${{ github.ref_name }}" --generate-notes
