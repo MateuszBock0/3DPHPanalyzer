@@ -33,6 +33,7 @@ import methodology
 from timeline_editor import (Transition, validate_transitions, resolve_schedule,
                              proposals_from_thermal, snap_to_recorded_sample, timeline_stages)
 from session_store import save_session, restore_session
+from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
 from activity_assessment import assess_all
 
@@ -95,7 +96,7 @@ def downsample_indices(t, series, max_buckets=1700):
     return sorted(chosen)
 
 
-class PHPDesktop(tk.Tk):
+class PHPDesktop(TimelineInteractionMixin, tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('3D PHP Analyzer  |  Thermal Diagnostics')
@@ -389,6 +390,8 @@ class PHPDesktop(tk.Tk):
         buttons_timeline.pack(fill='x', pady=(0, 8))
         ttk.Button(buttons_timeline, text='Przesuń na wykresie',
                    command=self.move_selected_transition).pack(side='left', padx=3)
+        ttk.Button(buttons_timeline, text='Edytuj Q',
+                   command=self.edit_selected_q).pack(side='left', padx=3)
         ttk.Button(buttons_timeline, text='Usuń znacznik',
                    command=self.delete_transition).pack(side='left', padx=3)
         ttk.Button(buttons_timeline, text='Cofnij edycję',
@@ -910,6 +913,20 @@ class PHPDesktop(tk.Tk):
                 ax.text((h.time-t0)/60, .95, 'ON?' if h.kind.endswith('ON_EST') else
                         'OFF?' if h.kind.endswith('OFF_EST') else 'P↑?',
                         rotation=90, color=c, fontsize=8, va='top', ha='left', transform=ax.get_xaxis_transform())
+        self._manual_line_artists = {}
+        for i, event in enumerate(row.get('timeline_events', [])):
+            manual_color = '#167957' if event.kind in ('ON', 'CHANGE_Q') else '#bf4a52'
+            artists=[]
+            for axis in self.axes:
+                artists.append(axis.axvline(event.time_min, color=manual_color,
+                                            lw=1.55, alpha=.95, zorder=7))
+            self._manual_line_artists[i] = artists
+            label=('ON' if event.kind=='ON' else 'OFF' if event.kind=='OFF'
+                   else 'Q↑/↓')
+            ax.annotate(label,xy=(event.time_min,.77),
+                xycoords=ax.get_xaxis_transform(),xytext=(3,0),
+                textcoords='offset points',rotation=90,fontsize=8,
+                color=manual_color,fontweight='bold')
         for stage in row['effective_stages']:
             for axis in self.axes: axis.axvline(stage.start_min, color=COLOR['q'], ls='--', lw=.65, alpha=.5)
         ax.set_ylabel('Temperatura [°C]')
