@@ -908,7 +908,8 @@ def _nice_ylim(values, pad=0.06, min_span=1.0):
     return (vmin - extra, vmax + extra)
 
 
-def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end_s: float | None = None):
+def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end_s: float | None = None,
+                  *, bottom_values=None, bottom_label=None, bottom_level_one=False):
     """Jednolity PNG: naglowek, trzy osobne panele i osobna stopka.
 
     Wszystkie opisy, legendy i podpis osi X maja zarezerwowane miejsce,
@@ -949,7 +950,11 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
     delta = [r.delta[i] for i in inds]
     dsmooth = [r.delta_smooth[i] for i in inds]
     activity = [r.activity[i] for i in inds]
-    relative_r = [r.r_rel_proxy[i] if r.r_rel_proxy[i] is not None else math.nan for i in inds]
+    if bottom_values is not None and len(bottom_values) != len(t):
+        raise ValueError('Nieprawidłowa długość trzeciego panelu eksportu.')
+    relative_r = [(bottom_values[i] if bottom_values[i] is not None else math.nan)
+                  for i in inds] if bottom_values is not None else [
+                    r.r_rel_proxy[i] if r.r_rel_proxy[i] is not None else math.nan for i in inds]
     # Insert NaNs for display only. Plotting consecutive valid samples on
     # opposite sides of a long logger outage would falsely imply observed data.
     step=median([b-a for a,b in zip(t,t[1:]) if b>a]) or 1.0
@@ -1069,7 +1074,20 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
     ax2.set_ylim(*_nice_ylim(delta + dsmooth, pad=0.08, min_span=8))
     ax2.legend(loc='upper left', fontsize=9, framealpha=0.88)
 
-    if BOTTOM_PANEL == 'RELATIVE_R':
+    if bottom_values is not None:
+        if bottom_level_one:
+            ax3.axhline(1.0, color='#768A9B', lw=1.1, linestyle='--', label='Odniesienie = 1')
+        ax3.plot(display_x, visible(relative_r), color='#8248AE', lw=2.0,
+                 drawstyle='steps-post' if bottom_label == 'Q [W]' else 'default',
+                 label=bottom_label or 'Wybrana metryka')
+        finite = [x for x in relative_r if math.isfinite(x)]
+        ax3.set_ylim(*_nice_ylim(finite, pad=.09, min_span=0.5 if bottom_level_one else 1.0))
+        ax3.set_ylabel(bottom_label or 'Wybrana metryka', fontsize=10, labelpad=9)
+        if not finite:
+            ax3.text(.5, .45, 'Brak wartości dla wybranego panelu / nieznana Q',
+                     transform=ax3.transAxes, ha='center', va='center',
+                     color='#6E7D8C', fontsize=10)
+    elif BOTTOM_PANEL == 'RELATIVE_R':
         ax3.axhline(1.0, color='#768A9B', lw=1.1, linestyle='--',
                     label='Poziom odniesienia = 1')
         ax3.plot(display_x, visible(relative_r), color='#8248AE', lw=2.0,
@@ -1105,10 +1123,13 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
                 'O1, O2…: epizody oscylacyjne   |   zielone tło: poprawa ΔT   |   pomarańczowe tło: brak potwierdzonej poprawy',
                 ha='left', va='center', fontsize=9.2, color='#4A5969')
     footer.text(0.01, 0.30,
-                ('R wzgl. (proxy) = ΔT/ΔT_ref; odpowiada R/R_ref tylko przy stałej mocy. '
-                 'ON?/OFF? szacowane; szare pasma: braki danych.'
-                 if BOTTOM_PANEL == 'RELATIVE_R' else
-                 'ON?/OFF?: estymacja z temperatur. Szare pasma = brak danych. Oscylacje nie dowodzą ruchu czynnika.'),
+                ('Dolny panel: ' + (bottom_label or 'wybrana metryka') +
+                  '. Q pochodzi z ustawień operatora; ON?/OFF? szacowane.'
+                  if bottom_values is not None else
+                  ('R wzgl. (proxy) = ΔT/ΔT_ref; odpowiada R/R_ref tylko przy stałej mocy. '
+                   'ON?/OFF? szacowane; szare pasma: braki danych.'
+                   if BOTTOM_PANEL == 'RELATIVE_R' else
+                   'ON?/OFF?: estymacja z temperatur. Szare pasma = brak danych. Oscylacje nie dowodzą ruchu czynnika.')),
                 ha='left', va='center', fontsize=9.2, color='#4A5969')
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1183,21 +1204,26 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
     plt.close(fig)
     return path
 
-def write_png(r: Analysis, directory: Path):
+def write_png(r: Analysis, directory: Path, *, bottom_values=None,
+              bottom_label=None, bottom_level_one=False):
     base = safe_name(Path(r.record.name).stem)
     general = directory / f'{base}_analiza.png'
-    make_plot_png(r, general)
+    make_plot_png(r, general, bottom_values=bottom_values,
+                  bottom_label=bottom_label, bottom_level_one=bottom_level_one)
     zoom = []
     for ep in r.episodes:
         if not ep.oscillatory:
             continue
         p = directory / f'{base}_{ep.display_id}_zblizenie.png'
-        make_plot_png(r, p, ep.start - 300, ep.end + 300)
+        make_plot_png(r, p, ep.start - 300, ep.end + 300,
+                      bottom_values=bottom_values, bottom_label=bottom_label,
+                      bottom_level_one=bottom_level_one)
         zoom.append(p)
     return general, zoom
 
 
-def render_html(analyses, summaries, events, plot_index, ignored, bad):
+def render_html(analyses, summaries, events, plot_index, ignored, bad,
+                *, desktop_mode=False, panel_label=None, methodology_html=''):
     st='''<style>
     :root{font-family:Segoe UI,Arial,sans-serif;color:#203448;background:#f5f7fa}
     body{max-width:1450px;margin:0 auto;padding:32px 22px;line-height:1.53}
@@ -1233,8 +1259,14 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad):
           '<li><b>Zielony:</b> oscylacje obu kanałów parownika + ≥15% redukcji ΔT przez ≥5 min w porównaniu z bazą lokalną.</li>',
           '<li><b>Pomarańczowy:</b> oscylacje temperatur bez potwierdzonej poprawy ΔT.</li>',
           '<li><b>ON?/OFF?:</b> szacowane przejścia cieplne. Kolorowe wąskie pasma obejmują zakres wykrycia zmiany o 1°C względem stabilnego poziomu przed zdarzeniem. <b>P↑?:</b> możliwy wzrost obciążenia. Nie są to przedziały potwierdzonego elektrycznego przełączenia grzałki.</li>',
-          '<li><b>Panel dolny:</b> ΔT/ΔT_ref jest tylko wskaźnikiem względnym. Przy stałej mocy R_app/R_ref = ΔT/ΔT_ref. Poziom odniesienia ustalono z pomiarów danego oszacowanego cyklu grzania; to nie jest R w K/W. Puste obszary oznaczają brak warunków do normalizacji, np. studzenie.</li>',
-          '<li><b>RMS:</b> nadal służy do detekcji oscylacji K1 i jest zapisywane w CSV; aby pokazać je na panelu dolnym, ustaw BOTTOM_PANEL = &quot;RMS&quot; w pliku .py.</li>',
+          ('<li><b>Panel dolny eksportowanych PNG:</b> '+xml(panel_label)+'. '
+           'Wartości wynikają z bieżącego Q i wybranej metryki, nie z proxy, '
+           'chyba że jawnie wybrano proxy.</li>'
+           if desktop_mode else
+           '<li><b>Panel dolny:</b> ΔT/ΔT_ref jest tylko wskaźnikiem względnym. Przy stałej mocy R_app/R_ref = ΔT/ΔT_ref. Poziom odniesienia ustalono z pomiarów danego oszacowanego cyklu grzania; to nie jest R w K/W. Puste obszary oznaczają brak warunków do normalizacji, np. studzenie.</li>'),
+          ('<li><b>RMS:</b> wykorzystywany w K1; można go wybrać jako trzeci panel.</li>'
+           if desktop_mode else
+           '<li><b>RMS:</b> nadal służy do detekcji oscylacji K1 i jest zapisywane w CSV; aby pokazać je na panelu dolnym, ustaw BOTTOM_PANEL = &quot;RMS&quot; w pliku .py.</li>'),
           '<li><b>Szare pasmo „BRAK DANYCH”:</b> brak rejestracji. Brak ciągłości pomiaru; nie interpretować okresu wewnątrz pasma jako pracy lub studzenia PHP.</li>',
           '</ul><p class="muted">Lokalna baza ΔT: okno od 6 do 1 minuty przed zdarzeniem. '
           'Progi mają charakter roboczy, wymagają walidacji; bez zsynchronizowanego logu mocy nie można potwierdzić K0.</p></section>']
@@ -1247,8 +1279,12 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad):
         out+=['<section class="panel" id="'+xml(safe_name(name))+'">',
               '<h2>'+xml(name)+'</h2>',
               '<p class="muted">Źródło: '+xml(r.record.origin)+'</p>',
-              '<p><a href="'+xml(png)+'">Otwórz wykres PNG</a> · '
-              '<a href="przebiegi/'+xml(safe_name(Path(name).stem))+'_przebieg.csv">Przebieg liczbowy CSV</a></p>',
+              '<p><a href="'+xml(png)+'">Otwórz wykres PNG</a> · '+
+              ('<a href="'+xml(safe_name(Path(name).stem))+'/moc_i_opor.csv">Q i R CSV</a> · '
+               '<a href="'+xml(safe_name(Path(name).stem))+'/przebieg_analityczny.csv">Przebieg liczbowy CSV</a> · '
+               '<a href="'+xml(safe_name(Path(name).stem))+'/konfiguracja.json">Konfiguracja JSON</a></p>'
+               if desktop_mode else
+               '<a href="przebiegi/'+xml(safe_name(Path(name).stem))+'_przebieg.csv">Przebieg liczbowy CSV</a></p>'),
               '<img src="'+xml(png)+'" alt="Wykres '+xml(name)+'">']
         if onoff_plot:
             out.append('<p><a href="'+xml(onoff_plot)+'">Zbliżenia przedziałów ON?/OFF? — PNG</a></p>')
@@ -1283,6 +1319,9 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad):
         out+=['<section class="panel"><h2>Inne pliki / ostrzeżenia</h2><ul>']
         for item in ignored+bad:out.append('<li>'+xml(item)+'</li>')
         out.append('</ul></section>')
+    if methodology_html:
+        out.append('<p><a href="Metodyka_obliczen.html">Oddzielna strona metodyki obliczeń</a></p>')
+        out.append(methodology_html)
     out.append('</body></html>')
     return '\n'.join(out)
 
