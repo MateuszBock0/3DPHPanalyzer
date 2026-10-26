@@ -1225,25 +1225,24 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
         te=r.te[left:right];tc=r.tc[left:right]
         # Plot separately across measurement gaps
         xplot=list(time);ep=list(te);cp=list(tc)
-        for j in range(1,len(time)):
+        for j in range(len(time)-1,0,-1):
             if t[left+j]-t[left+j-1] > 10:
                 xplot.insert(j,float('nan'))
                 ep.insert(j,float('nan'));cp.insert(j,float('nan'))
-                break
         ax.plot(xplot,ep,color=COL['ev'],lw=2.0,label='Parownik')
         ax.plot(xplot,cp,color=COL['co'],lw=1.7,label='Skraplacz')
         if e.band_start is not None and e.band_end is not None:
             color = COL['ev'] if e.kind == 'HEATING_OFF_EST' else COL['co']
             ax.axvspan((e.band_start-t[0])/60,(e.band_end-t[0])/60,color=color,alpha=.19,zorder=-1)
-            ax.axvline(e.band_start/60,color=color,alpha=.7,ls=':',lw=1)
-            ax.axvline(e.band_end/60,color=color,alpha=.7,ls=':',lw=1)
+            ax.axvline((e.band_start-t[0])/60,color=color,alpha=.7,ls=':',lw=1)
+            ax.axvline((e.band_end-t[0])/60,color=color,alpha=.7,ls=':',lw=1)
         if e.t_before is not None:
             ax.axhspan(e.t_before-1,e.t_before+1,color=COL['middle'],alpha=.15,zorder=-2)
             ax.axhline(e.t_before,color=COL['middle'],lw=1.2,ls='--',alpha=.85)
         ident='OFF?' if e.kind=='HEATING_OFF_EST' else 'P↑?' if e.kind=='HEATING_INCREASE_EST' else 'ON?'
         eventtext=f'{ident}: {(e.time-t[0])/60:.2f} min'
         if e.band_start is not None:
-            eventtext+=f'  |  zakres: {e.band_start/60:.2f}–{e.band_end/60:.2f} min'
+            eventtext+=f'  |  zakres: {(e.band_start-t[0])/60:.2f}–{(e.band_end-t[0])/60:.2f} min'
         ax.set_title(eventtext,fontsize=11,color='#293C4C')
         if e.method!='PLATEAU_PLUS_MINUS_1C':
             ax.text(.02,.96,'BRAK STABILNEGO PLATEAU — przybliżenie',ha='left',va='top',

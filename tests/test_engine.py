@@ -79,6 +79,29 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(engine.csv_episodes([a])[0]['poczatek_min_od_csv'],'1.00')
         self.assertEqual(engine.csv_summary([a])[0]['pierwszy_epizod_min_od_csv'],'1.00')
 
+    def test_onoff_zoom_annotation_and_uncertainty_band_use_relative_time(self):
+        t=list(range(14*3600,14*3600+180))
+        record=engine.Record('clock.csv','memory',t,[(80,80,60,60,40,40)]*len(t))
+        analysis=engine.analyze(record)
+        analysis.heating_events=[SimpleNamespace(
+            time=t[0]+60,kind='HEATING_ON_EST',band_start=t[0]+55,
+            band_end=t[0]+65,t_before=80,t_after=81,
+            method='PLATEAU_PLUS_MINUS_1C')]
+        from unittest.mock import patch
+        observed=[]
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(engine.plt,'close',side_effect=lambda fig:
+                              observed.append((fig.axes[0].get_title(),
+                                               fig.axes[0].get_xlim(),
+                                               [line.get_xdata() for line in fig.axes[0].lines]))):
+                engine.make_heating_diagnostics(analysis,Path(folder))
+        title,xlim,lines=observed[0]
+        self.assertIn('1.00 min',title)
+        self.assertIn('0.92–1.08 min',title)
+        self.assertLess(xlim[1],4.0)
+        self.assertTrue(all(max(list(coords))<4.0 for coords in lines
+                            if len(coords) and all(isinstance(x,(float,int)) for x in coords)))
+
     def test_backward_clock_is_never_silently_sorted(self):
         buf=io.StringIO()
         writer=csv.writer(buf)
