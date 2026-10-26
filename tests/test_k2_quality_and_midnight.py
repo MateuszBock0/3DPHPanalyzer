@@ -80,7 +80,7 @@ class TimeAndExportTests(unittest.TestCase):
             hour, rem = divmod(sec, 3600)
             minute, second = divmod(rem, 60)
             records.append(f'{hour:02d}:{minute:02d}:{second:02d},30,30,28,28,25,25')
-        rec = engine.parse_csv(('\\n'.join(records)).encode(), 'midnight.csv', 'fixture')
+        rec = engine.parse_csv(('\n'.join(records)).encode(), 'midnight.csv', 'fixture')
         self.assertEqual(len(rec.t), 130)
         self.assertEqual(rec.t[-1] - rec.t[0], 129)
 
