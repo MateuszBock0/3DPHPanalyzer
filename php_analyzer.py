@@ -1356,6 +1356,8 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
                if desktop_mode and activity_reviews is not None else ''),
               '<p><a href="'+xml(png)+'">Otwórz wykres PNG</a> · '+
               ('<a href="'+xml(safe_name(Path(name).stem))+'/moc_i_opor.csv">Q i R CSV</a> · '
+               '<a href="'+xml(safe_name(Path(name).stem))+'/podsumowanie_eksperymentu.csv">Podsumowanie CSV</a> · '
+               '<a href="'+xml(safe_name(Path(name).stem))+'/epizody_podsumowanie.csv">O1/O2 — tabela CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/przebieg_analityczny.csv">Przebieg liczbowy CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/reczne_zdarzenia_ON_OFF_Q.csv">Ręczne ON/OFF/Q CSV</a> · '
                '<a href="'+xml(safe_name(Path(name).stem))+'/sugestie_ON_OFF_po_korekcie.csv">Korekty ON?/OFF? CSV</a> · '+

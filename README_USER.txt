@@ -73,3 +73,19 @@ N O W E :  EDYCJA PROPOZYCJI ON?/OFF?
 Przy eksporcie wielu pomiarow o tej samej nazwie foldery sa rozrozniane po zrodle.
 Przy zlym czasie (cofniecie zegara bez polnocy) plik jest odrzucany.
 Rref wymaga min. 120 s i roboczej kontroli stabilnosci Te/Tc (0,5 C/min).
+
+
+PODSUMOWANIE PO WYBRANIU POMIARU CSV
+----------------------------------
+Po zaznaczeniu pliku w liscie od razu pojawia sie zakladka Podsumowanie.
+Karty pokazuja przypisana Q [W], pierwszy O1, czas od ON/ON? (jesli
+mozna go ustalic), zmiane DeltaT w O1 i pozorny opor R_app w O1.
+Pusta Q => nie wyliczamy R_app. Zmienna Q w O1 => brak pojedynczej R_app.
+Brak ON => czas od ON jest nieznany, a nie liczony od poczatku CSV.
+Termiczne ON? moze podac tylko ORIENTACYJNY czas od cieplnej reakcji.
+Wazne: czas do O1 to nie bezposredni dowod przeplywu czynnika w PHP.
+
+Kliknij zielony O1/O2 na osi czasu lub podwojnie kliknij wiersz tabeli,
+aby powiekszyc ten epizod w zakladce Wykresy.
+Karty zmieniaja sie po edycji ON/OFF/Q. W eksporcie znajdziesz
+podsumowanie_eksperymentu.csv i epizody_podsumowanie.csv.

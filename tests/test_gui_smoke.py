@@ -43,6 +43,32 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
     def tearDown(self):
         self.app.destroy()
 
+    def test_summary_tab_opens_after_csv_selection_and_updates_with_Q(self):
+        self.assertEqual(self.app.tabs.select(), str(self.app.summary_page))
+        self.assertEqual(self.app.summary_filename.get(),'synthetic.csv')
+        self.assertIn('nieznana',self.app.summary_card_vars['q'][0].get())
+        self.assertEqual(self.app.summary_card_vars['r'][0].get(),'—')
+        self.app.editor_q_var.set('15')
+        self.app._add_marker('ON',.5)
+        self.assertIn('15 W',self.app.summary_card_vars['q'][0].get())
+        self.assertEqual(self.app.tabs.select(),str(self.app.summary_page))
+
+    def test_summary_episode_table_and_click_to_zoom(self):
+        from types import SimpleNamespace
+        record=self.app._get()['record']
+        episode=SimpleNamespace(display_id='O1',oscillatory=True,
+            start=70.,end=110.,baseline=13.,median_delta=10.,
+            reduction_pct=23.,k2=False)
+        self.app._get()['analysis'].episodes=[episode]
+        self.app._render_summary()
+        self.assertEqual(self.app.summary_tree.get_children(),('O1',))
+        self.assertIn('23',self.app.summary_card_vars['delta'][0].get())
+        self.app._timeline_open_episode('O1')
+        self.assertEqual(self.app.tabs.select(),str(self.app.chart_page))
+        left,right=self.app.axes[-1].get_xlim()
+        self.assertLess(left,70/60)
+        self.assertGreater(right,110/60)
+
     def test_inline_q_and_terminal_off(self):
         from timeline_editor import timeline_stages
         from power_model import PowerStage

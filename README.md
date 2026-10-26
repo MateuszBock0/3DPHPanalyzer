@@ -144,3 +144,11 @@ Parser CSV rozpoznaje przejścia zegara dobowego z 20:00–24:00 na 00:00–04:0
 - Eksport zbiorczy używa stabilnego identyfikatora źródła w nazwie folderu, aby dwa różne pliki `test.csv` nie nadpisywały się. Wewnątrz `konfiguracja.json` zachowana jest pierwotna nazwa pomiaru.
 - Okno R/Rref na wykresie desktopowym musi obejmować co najmniej **120 s** oraz mieć trend median Te i Tc ≤ **0,5 °C/min**. To robocze kryterium quasi-ustalenia wymagające walidacji dla stanowiska, nie uniwersalna definicja stanu ustalonego. Program odrzuca zbyt krótkie i wyraźnie niestabilne referencje.
 - Ręczne etapy Q nie mogą wykraczać poza koniec pliku; kliknięcia w luki rejestracji są odrzucane. Przy edycji zachowywany jest zoom wykresu. Zapis sesji przyjmuje historyczne JSON v4; nowe korekty ON?/OFF? są w schemacie v5.
+
+
+## Nowa zakładka „Podsumowanie” (jeden eksperyment)
+Po wybraniu pomiaru CSV program **automatycznie otwiera Podsumowanie** z kartami: przypisana nominalna **Q [W]** (nie U/I), pierwszy wykryty epizod O1 i orientacyjny czas od ON, lokalna redukcja ΔT w O1 i mediana **przejściowego R_app [K/W]** podczas O1 wyłącznie przy stałej dodatniej Q. Karty pokazują „—” i przyczynę, jeśli nie ma podstaw do obliczenia. Wykres-osi czasu wyróżnia przypisane grzanie, OFF, termiczne ON?/OFF? i epizody K1; O1/O2 można kliknąć, by przejść do powiększenia w zakładce „Wykresy”. Tabela epizodów pokazuje okna, redukcję ΔT i istniejące kwalifikacje K2 oraz przesłanki aktywności.
+
+**Ważne metodologicznie:** ON wpisany przez operatora ma pierwszeństwo przed ON? oszacowanym z temperatury; OFF kasuje wcześniejszy początek grzania. Brak wiarygodnego ON oznacza brak czasu rozruchu od ON; początek CSV nie jest traktowany jako włączenie grzałki. Wynik to **czas do pierwszego wykrytego O1**, nie dowód ruchu dwufazowego. Q jest ręcznie przypisana przez operatora, ponieważ aparatura nie rejestruje U ani I; przy zmianie Q w trakcie O1 nie wyznaczamy pojedynczej wartości R_app dla tego epizodu.
+
+Karty przeliczane są po edycji ON/OFF/Q i deklaracji chłodzenia. Eksport wybranego i całości zawiera `podsumowanie_eksperymentu.csv` oraz `epizody_podsumowanie.csv`; raport HTML do nich odsyła. Metryki pochodzą z tego samego silnika K1/K2 i modelu Q, co pozostałe zakładki, bez dodatkowego detektora.
