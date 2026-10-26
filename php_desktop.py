@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import hashlib
+import copy
 import math
 import os
 import queue
@@ -33,7 +35,8 @@ import methodology
 from timeline_editor import (Transition, validate_transitions, resolve_schedule,
                              proposals_from_thermal, snap_to_recorded_sample,
                              timeline_stages, operator_marker_stages,
-                             last_heating_boundary)
+                             last_heating_boundary, initial_suggestions,
+                             suggested_heating_events)
 from session_store import save_session, restore_session
 from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
@@ -114,6 +117,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._first_q_dialog_done = False
         self.chart_edit_mode = None
         self._drag_index = None
+        self._drag_suggestion_index = None
+        self._suggestion_line_artists = {}
+        self._last_plot_record = None
         self._drag_lines = []
         self._manual_line_artists = {}
         self._build_ui()
@@ -234,6 +240,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 command=lambda k=mode: self._set_chart_mode(k)).pack(side='left', padx=3)
         editor2 = ttk.Frame(self.chart_page)
         editor2.pack(fill='x', padx=10, pady=(1, 3))
+        ttk.Button(editor2, text='+ ON? (sugestia)',
+                   command=lambda:self._set_chart_mode('SUGGEST_ON')).pack(side='left', padx=3)
+        ttk.Button(editor2, text='+ OFF? (sugestia)',
+                   command=lambda:self._set_chart_mode('SUGGEST_OFF')).pack(side='left', padx=3)
         ttk.Button(editor2, text='OFF na końcu CSV (potwierdź)',
                    command=self.add_off_at_end).pack(side='left', padx=3)
         ttk.Button(editor2, text='Sugestie ON?/OFF?',
@@ -393,6 +403,23 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                    command=self.override_period).pack(side='left', padx=(0, 8))
         ttk.Label(inferred_actions, text='Zdarzenia cieplne tworzą wstępne granice okresów, a nie log zasilacza.',
                   style='Sub.TLabel').pack(side='left')
+        suggestion_box = ttk.LabelFrame(body,
+            text='Sugestie ON?/OFF? z temperatur — edytuj granice, dodaj lub usuń bez Q', padding=3)
+        suggestion_box.pack(fill='both', expand=True, pady=(3, 7))
+        self.suggestion_tree = self._tree(suggestion_box,
+            [('time','Czas [min]',115),('kind','Przejście?',125),
+             ('source','Źródło / korekta',250)], height=4)
+        sugg_actions=ttk.Frame(body); sugg_actions.pack(fill='x', pady=(0, 8))
+        ttk.Button(sugg_actions, text='Przesuń na wykresie',
+                   command=self.move_selected_suggestion).pack(side='left', padx=3)
+        ttk.Button(sugg_actions, text='Usuń sugestię',
+                   command=self.delete_selected_suggestion).pack(side='left', padx=3)
+        ttk.Button(sugg_actions, text='Przywróć automatyczne',
+                   command=self.reset_thermal_suggestions).pack(side='left', padx=3)
+        ttk.Label(body,
+            text='Szacowane ON?/OFF? można przeciągać bez Q. To nadal reakcje temperatury, '
+                 'nie czasy przełączeń elektrycznych. Moc podaj osobno w polu Q.',
+            style='Sub.TLabel', wraplength=900).pack(anchor='w', pady=(0, 4))
         timeline_box = ttk.LabelFrame(body,
             text='Znaczniki ON / OFF / zmiana Q na wykresie (po ręcznym zatwierdzeniu)', padding=3)
         timeline_box.pack(fill='both', expand=True, pady=(3, 6))
@@ -537,11 +564,14 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     a = engine.analyze(record)
                     _segments, gaps = engine.recording_segments(record.t)
                     periods = derive_estimated_periods(record.t, a.heating_events, gaps)
+                    suggestions=initial_suggestions(
+                        a.heating_events, record.t[0], (record.t[-1]-record.t[0])/60)
                     results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
                                     'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
                                     'effective_stages': [], 'ref_enabled': False,
                                     'cooling_confirmed': False, 'k2_reviews': {}, 'activity_assessments': {},
-                                    'timeline_events': [], 'undo_events': [], 'session_restored': False,
+                                    'timeline_events': [], 'thermal_suggestions': suggestions,
+                                    'undo_events': [], 'undo_history': [], 'session_restored': False,
                                     'ref_start': 0., 'ref_end': 10.})
                     row = results[-1]
                     try:
@@ -607,6 +637,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._render_diagnosis()
         self.chart_edit_mode = None
         self._drag_index = None
+        self._drag_suggestion_index = None
         self.draw_plot()
 
     def _get(self):
@@ -721,6 +752,15 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 note = 'Możliwa zmiana Q — wymaga ręcznego Q! ' + note
             self.period_tree.insert('', 'end', iid=str(i), values=(p.state,
                 f'{p.start_min:.3f}', f'{p.end_min:.3f}', power, note))
+        self.suggestion_tree.delete(*self.suggestion_tree.get_children())
+        labels = {'HEATING_ON_EST':'ON?', 'HEATING_OFF_EST':'OFF?',
+                  'HEATING_INCREASE_EST':'P↑?'}
+        sources = {'automatic':'automatycznie wykryte',
+                   'operator_adjusted':'przesunięte przez operatora',
+                   'operator_added':'dodane przez operatora jako hipoteza'}
+        for i, item in enumerate(row.get('thermal_suggestions', [])):
+            self.suggestion_tree.insert('', 'end', iid=str(i), values=(
+                f'{item.time_min:.3f}', labels[item.kind], sources[item.source]))
         self.timeline_tree.delete(*self.timeline_tree.get_children())
         for i, ev in enumerate(sorted(row.get('timeline_events', []), key=lambda x:x.time_min)):
             self.timeline_tree.insert('', 'end', iid=str(i), values=(
@@ -766,6 +806,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 values = [float(v.get().replace(',', '.')) for v in vars_]
                 st = PowerStage(*values)
                 validate([st])
+                duration=(self._get()['record'].t[-1]-self._get()['record'].t[0])/60
+                if st.end_min > duration + 1e-8:
+                    raise ValueError(f'Przedział Q kończy się po końcu pomiaru ({duration:.3f} min).')
                 answer.append(st); dialog.destroy()
             except Exception as error:
                 messagebox.showerror('Błędny etap', str(error), parent=dialog)
@@ -837,6 +880,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
     def _recalculate(self, notify=False):
         row = self._get()
         a = row['analysis']
+        if 'thermal_suggestions' in row:
+            _segments,gaps=engine.recording_segments(a.record.t)
+            row['periods']=derive_estimated_periods(a.record.t,
+                suggested_heating_events(row['thermal_suggestions'],a.record.t[0]),gaps)
         ref = ((row['ref_start'], row['ref_end']) if row['ref_enabled'] else None)
         duration = (a.record.t[-1] - a.record.t[0])/60
         row['effective_stages'] = resolve_schedule(
@@ -935,13 +982,27 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         segments, gaps = engine.recording_segments(rec.t)
         for left, right in gaps:
             for axis in self.axes: axis.axvspan((left-t0)/60, (right-t0)/60, color='#aebec8', alpha=.35, zorder=0)
+        self._suggestion_line_artists = {}
         if self.show_estimated.get():
-            for h in a.heating_events:
-                c = '#577697' if h.kind.endswith('ON_EST') else '#8d74a7'
-                for axis in self.axes: axis.axvline((h.time-t0)/60, color=c, ls=':', lw=1.1, alpha=.8)
-                ax.text((h.time-t0)/60, .95, 'ON?' if h.kind.endswith('ON_EST') else
-                        'OFF?' if h.kind.endswith('OFF_EST') else 'P↑?',
-                        rotation=90, color=c, fontsize=8, va='top', ha='left', transform=ax.get_xaxis_transform())
+            for p in row['periods']:
+                if p.state in ('ON?', 'OFF?'):
+                    shade=('#dfb967' if p.state=='ON?' else '#a9cade')
+                    for axis in self.axes:
+                        axis.axvspan(p.start_min,p.end_min,color=shade,alpha=.09,zorder=-8)
+            estimated=row.get('thermal_suggestions',[])
+            for i, event in enumerate(estimated):
+                c = '#577697' if event.kind=='HEATING_ON_EST' else (
+                    '#8d74a7' if event.kind=='HEATING_OFF_EST' else '#b98b3c')
+                lines=[]
+                for axis in self.axes:
+                    lines.append(axis.axvline(event.time_min,color=c,ls=':',lw=1.3,alpha=.9))
+                self._suggestion_line_artists[i]=lines
+                tag={'HEATING_ON_EST':'ON?','HEATING_OFF_EST':'OFF?',
+                     'HEATING_INCREASE_EST':'P↑?'}[event.kind]
+                if event.source!='automatic':
+                    tag+=' (korekta)'
+                ax.text(event.time_min,.95,tag,rotation=90,color=c,fontsize=8,
+                        va='top',ha='left',transform=ax.get_xaxis_transform())
         self._manual_line_artists = {}
         for i, event in enumerate(row.get('timeline_events', [])):
             manual_color = '#167957' if event.kind in ('ON', 'CHANGE_Q') else '#bf4a52'
