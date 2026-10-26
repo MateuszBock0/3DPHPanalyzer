@@ -23,3 +23,13 @@ Program nie odczytuje binarnych plikow PicoLog. Eksportuj pomiary jako CSV.
 
 Brak potrzeby instalowania Pythona i pakietow. Internet nie jest potrzebny.
 Windows moze pokazac ostrzezenie SmartScreen dla aplikacji bez podpisu cyfrowego.
+
+ 
+NOWE FUNKCJE
+- „Wczytaj konfigurację JSON” przywraca Q i referencję do wybranego pomiaru CSV.
+- Nowe konfiguracje porównują odcisk SHA-256 wszystkich próbek.
+- P↑? nie otrzymuje automatycznie Q: po wykryciu możliwej zmiany mocy
+  wpisz nową wartość ręcznie, jeśli ją znasz.
+- R/Rref wymaga jednego ciągłego odcinka dodatniej, stałej Q bez luk i OFF.
+- Raport HTML i ostatnia zakładka programu wyjaśniają wszystkie obliczenia.
+- Eksport PNG pokazuje typ trzeciego panelu wybrany w aplikacji.
