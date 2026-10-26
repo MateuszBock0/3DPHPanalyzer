@@ -71,7 +71,7 @@ def assess_episode(analysis, ep, resolved_stages, manual_stages=(),
     active_lo=min(ep.end, ep.start+30.0)
     active_hi=min(ep.end, ep.start+600.0)
     gaps=engine.recording_segments(time)[1]
-    interrupted=any(a < active_hi and b > lo for a,b in gaps)
+    interrupted=any(a < ep.end and b > lo for a,b in gaps)
     if interrupted:
         before_e=before_c=after_e=after_c=None
     else:
@@ -84,7 +84,7 @@ def assess_episode(analysis, ep, resolved_stages, manual_stages=(),
     dtc=after_c-before_c if valid else None
     ddelta=dte-dtc if valid else None
     opposite=valid and dte <= -MIN_EVAPORATOR_DROP_C and dtc >= MIN_CONDENSER_RISE_C
-    jumps=_sensor_jump(analysis,lo,active_hi)
+    jumps=_sensor_jump(analysis,lo,ep.end)
     qa,q_reason=stable_positive_power(resolved_stages,
                       (lo-origin)/60,(ep.end-origin)/60)
     # An inferred thermal ON? is NOT electrically verified Q(t).
