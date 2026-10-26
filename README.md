@@ -75,3 +75,7 @@ python -m unittest discover -s tests -v
 Współczynnik R_app nie uwzględnia automatycznie strat i akumulacji ciepła. Żadna detekcja oscylacji nie jest bezpośrednim pomiarem przepływu płynu. Natywne pliki `.picolog` nie są czytane — wymagany eksport CSV. Podczas pierwszego uruchomienia niepodpisana aplikacja może uruchomić ostrzeżenie Windows SmartScreen. Wersja przenośna przeznaczona jest dla Windows x64.
 
 MIT.
+
+
+## Nowa kontrola R_ref
+Okno referencyjne musi obejmować wyłącznie jeden ciągły okres dodatniej, stałej mocy Q, bez OFF i braków rejestracji.
