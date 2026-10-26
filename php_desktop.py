@@ -31,6 +31,7 @@ from session_config import (export_configuration, validated_import,
                             LegacyConfigurationError)
 import methodology
 from episode_validation import resolved_q_label, review_all_k2
+from activity_assessment import assess_all
 
 
 def app_folder() -> Path:
@@ -159,14 +160,17 @@ class PHPDesktop(tk.Tk):
         self.tabs.pack(fill='both', expand=True)
         self.chart_page = ttk.Frame(self.tabs)
         self.events_page = ttk.Frame(self.tabs)
+        self.diagnosis_page = ttk.Frame(self.tabs)
         self.power_page = ttk.Frame(self.tabs)
         self.help_page = ttk.Frame(self.tabs)
         self.tabs.add(self.chart_page, text='Wykresy')
         self.tabs.add(self.events_page, text='Epizody / ON? OFF?')
+        self.tabs.add(self.diagnosis_page, text='Czy PHP pracuje?')
         self.tabs.add(self.power_page, text='Moc Q / R')
         self.tabs.add(self.help_page, text='Metodyka i obliczenia')
         self._build_chart_page()
         self._build_events_page()
+        self._build_diagnosis_page()
         self._build_power_page()
         self._build_help_page()
         foot = ttk.Frame(self)
@@ -237,6 +241,79 @@ class PHPDesktop(tk.Tk):
                                                ('method', 'Metoda', 240)])
         self.notes = tk.StringVar(value='Wczytaj plik, żeby zobaczyć wyniki detekcji.')
         ttk.Label(frame, textvariable=self.notes, wraplength=950, style='Sub.TLabel').pack(fill='x', padx=16, pady=8)
+
+    def _build_diagnosis_page(self):
+        root = ttk.Frame(self.diagnosis_page)
+        root.pack(fill='both', expand=True, padx=10, pady=10)
+        ttk.Label(root, text='Czy PHP prawdopodobnie pracuje?',
+                  style='Heading.TLabel').pack(anchor='w', pady=(0, 6))
+        ttk.Label(root, text='Ocena jakościowa: K1/K2, reakcja Te/Tc i dane operatora. '
+                  'Bez bezpośredniego pomiaru przepływu nie można potwierdzić ruchu czynnika. '
+                  'Progi ΔTe ≤ −1°C i ΔTc ≥ +0,5°C są robocze.',
+                  style='Sub.TLabel', wraplength=950).pack(anchor='w', pady=(0, 8))
+        self.diagnosis_tree = self._tree(root, [
+            ('id','Epizod',75), ('grade','Wniosek',245),
+            ('te','ΔTe [°C]',105), ('tc','ΔTc [°C]',105),
+            ('delta','Δ(Te−Tc) [K]',125), ('q','Źródło Q',240)], height=7)
+        self.diagnosis_tree.bind('<<TreeviewSelect>>', self._diagnosis_selected)
+        self.diagnosis_tree.bind('<Double-1>', self._show_diagnosis_on_plot)
+        actions = ttk.Frame(root)
+        actions.pack(fill='x', pady=(8, 2))
+        ttk.Button(actions, text='Pokaż epizod na wykresie',
+                   command=self._show_diagnosis_on_plot).pack(side='left')
+        self.diagnosis_details = tk.StringVar(value='Wybierz epizod O1/O2.')
+        ttk.Label(root, textvariable=self.diagnosis_details, style='Sub.TLabel',
+                  wraplength=920, justify='left').pack(anchor='w', pady=10)
+        ttk.Label(root, text='Co możesz wprowadzić: rzeczywiste Q i granice zmian '
+                  'mocy, deklarację chłodzenia z dziennika. Dodatkowe cenne pomiary: '
+                  'zsynchronizowany log U/I i temperatura otoczenia.',
+                  style='Sub.TLabel', wraplength=920).pack(anchor='w', pady=8)
+
+    def _render_diagnosis(self):
+        self.diagnosis_tree.delete(*self.diagnosis_tree.get_children())
+        row = self._get()
+        reviews = row['activity_assessments']
+        for ep in row['analysis'].episodes:
+            if not ep.oscillatory:
+                continue
+            review = reviews[ep.display_id]
+            fmt = lambda x: '—' if x is None else f'{x:+.2f}'
+            self.diagnosis_tree.insert('', 'end', iid=ep.display_id, values=(
+                ep.display_id, review.label, fmt(review.dte_c), fmt(review.dtc_c),
+                fmt(review.ddelta_k), review.power_source))
+        if reviews:
+            ident = next(iter(reviews))
+            self.diagnosis_tree.selection_set(ident)
+            self._diagnosis_selected()
+        else:
+            self.diagnosis_details.set('Nie znaleziono epizodów K1. '
+                'Nie dowodzi to braku przepływu czynnika w PHP.')
+
+    def _diagnosis_selected(self, *_):
+        chosen = self.diagnosis_tree.selection()
+        if not chosen or self.active is None:
+            return
+        review = self._get()['activity_assessments'].get(chosen[0])
+        if review:
+            self.diagnosis_details.set(
+                f'{chosen[0]} — {review.label}\n'
+                f'PRZESŁANKI: {review.summary}\n'
+                f'CO WPROWADZIĆ / SPRAWDZIĆ: {review.to_enter}')
+
+    def _show_diagnosis_on_plot(self, *_):
+        chosen = self.diagnosis_tree.selection()
+        if not chosen or self.active is None:
+            return
+        row = self._get()
+        ep = next((e for e in row['analysis'].episodes
+                   if e.display_id == chosen[0]), None)
+        if ep is None:
+            return
+        self.tabs.select(self.chart_page)
+        self.draw_plot()
+        t0 = row['record'].t[0]
+        self.axes[-1].set_xlim(max(0, (ep.start-t0)/60-5), (ep.end-t0)/60+5)
+        self.canvas.draw_idle()
 
     def _build_power_page(self):
         # The power configuration remains reachable also on smaller laptop screens.
@@ -354,6 +431,7 @@ class PHPDesktop(tk.Tk):
             self._recalculate()
             self._render_power_tree()
             self._render_events()
+            self._render_diagnosis()
             self.draw_plot()
             self.status.set('Wczytano konfigurację: ' + filename)
             messagebox.showinfo('Konfiguracja', 'Przywrócono Q, nadpisania i referencję R/Rref.')
@@ -404,7 +482,7 @@ class PHPDesktop(tk.Tk):
                     results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
                                     'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
                                     'effective_stages': [], 'ref_enabled': False,
-                                    'cooling_confirmed': False, 'k2_reviews': {},
+                                    'cooling_confirmed': False, 'k2_reviews': {}, 'activity_assessments': {},
                                     'ref_start': 0., 'ref_end': 10.})
                 except Exception as error:
                     problems.append(f'{record.name}: {error}')
@@ -459,6 +537,7 @@ class PHPDesktop(tk.Tk):
         self._recalculate(notify=False)
         self._render_power_tree()
         self._render_events()
+        self._render_diagnosis()
         self.draw_plot()
 
     def _get(self):
@@ -651,6 +730,7 @@ class PHPDesktop(tk.Tk):
             self._recalculate(notify=True)
             self._render_power_tree()
             self._render_events()
+            self._render_diagnosis()
             self.draw_plot()
         except ValueError as e:
             messagebox.showerror('Okno referencyjne', str(e))
@@ -662,6 +742,7 @@ class PHPDesktop(tk.Tk):
         row['cooling_confirmed'] = bool(self.cooling_confirmed.get())
         self._recalculate()
         self._render_events()
+        self._render_diagnosis()
         self.status.set('Zmieniono deklarację warunków chłodzenia; kwalifikacja K2 przeliczona.')
 
     def _recalculate(self, notify=False):
@@ -673,6 +754,9 @@ class PHPDesktop(tk.Tk):
             row['periods'], row['constant_q'], row['stages'], duration, row['constant_scope'])
         row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
         row['k2_reviews'] = review_all_k2(a, row['effective_stages'], row['cooling_confirmed'])
+        row['activity_assessments'] = assess_all(
+            a, row['effective_stages'], row['stages'], row['constant_q'],
+            row['constant_scope'], row['cooling_confirmed'])
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')
@@ -851,6 +935,21 @@ class PHPDesktop(tk.Tk):
         }
         return modes[self.panel_var.get()]
 
+    @staticmethod
+    def _diagnosis_export_rows(row):
+        result = []
+        for ep in row['analysis'].episodes:
+            if not ep.oscillatory:
+                continue
+            a = row['activity_assessments'][ep.display_id]
+            result.append([row['record'].name, ep.display_id, a.label, a.code,
+                           a.dte_c if a.dte_c is not None else '',
+                           a.dtc_c if a.dtc_c is not None else '',
+                           a.ddelta_k if a.ddelta_k is not None else '',
+                           a.power_source, a.power_w if a.power_w is not None else '',
+                           a.summary, a.to_enter])
+        return result
+
     def _export_one(self, row, folder):
         a = row['analysis']
         folder.mkdir(parents=True, exist_ok=True)
@@ -865,6 +964,10 @@ class PHPDesktop(tk.Tk):
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
+        self._writer(folder/'ocena_aktywnosci_PHP.csv',
+                     ['plik','epizod','ocena','status','delta_Te_C','delta_Tc_C',
+                      'delta_roznicy_K','Q_zrodlo','Q_W','przeslanki','co_sprawdzic'],
+                     self._diagnosis_export_rows(row))
         (folder/'Metodyka_obliczen.html').write_text(methodology.as_html(), encoding='utf-8')
 
     def export_selected(self):
@@ -899,6 +1002,11 @@ class PHPDesktop(tk.Tk):
             summary = engine.csv_summary(analyses)
             all_events = engine.csv_episodes(analyses)
             episode_events = engine.csv_episodes(analyses, oscillatory_only=True)
+            self._writer(out/'ocena_aktywnosci_PHP_zbiorczo.csv',
+                         ['plik','epizod','ocena','status','delta_Te_C','delta_Tc_C',
+                          'delta_roznicy_K','Q_zrodlo','Q_W','przeslanki','co_sprawdzic'],
+                         [entry for row in self.record_rows
+                          for entry in self._diagnosis_export_rows(row)])
             assessment_lookup = {(row['record'].name, ep.display_id):
                                  row['k2_reviews'][ep.display_id].code
                                  for row in self.record_rows for ep in row['analysis'].episodes
@@ -906,9 +1014,21 @@ class PHPDesktop(tk.Tk):
             for event in all_events:
                 event['K2_weryfikacja_Q_chlodzenia'] = assessment_lookup.get(
                     (event['plik'], event['epizod']), 'NIE_DOTYCZY')
+                event['Ocena_aktywnosci_PHP'] = next(
+                    (row['activity_assessments'][event['epizod']].code
+                     for row in self.record_rows
+                     if row['record'].name == event['plik']
+                     and event['epizod'] in row['activity_assessments']),
+                    'NIE_DOTYCZY')
             for event in episode_events:
                 event['K2_weryfikacja_Q_chlodzenia'] = assessment_lookup.get(
                     (event['plik'], event['epizod']), 'NIE_DOTYCZY')
+                event['Ocena_aktywnosci_PHP'] = next(
+                    (row['activity_assessments'][event['epizod']].code
+                     for row in self.record_rows
+                     if row['record'].name == event['plik']
+                     and event['epizod'] in row['activity_assessments']),
+                    'NIE_DOTYCZY')
             for summary_row in summary:
                 key = summary_row['plik']
                 summary_row['K2_warunkowe_przy_Q_i_chlodzeniu'] = sum(
