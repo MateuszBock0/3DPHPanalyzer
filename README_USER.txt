@@ -55,3 +55,4 @@ AUTO ODTWARZANIE EKSPERYMENTU (BEZ LOGU ZASILACZA)
 NIE MA pomiaru U/I. Moc Q pochodzi z wpisanych przez Ciebie nastaw.
 Akceptacja ON?/OFF? z temperatur NIE potwierdza czasu elektrycznego
 przelaczenia - moze on byc opozniony przez bezwladnosc termiczna.
+\nKONIEC CSV to tylko koniec danych, NIE automatyczne OFF!\nJesli wiesz, ze grzalka zostala wylaczona przy ostatnim pomiarze,\nuzyj przycisku 'OFF na koncu CSV (potwierdz)'.\nDane PicoLog NIE zawieraja U ani I; wpisuj nominalne Q [W] z notatek.\n
