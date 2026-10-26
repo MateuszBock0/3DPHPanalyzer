@@ -91,6 +91,19 @@ Okno referencyjne musi obejmować wyłącznie jeden ciągły okres dodatniej, st
 
 Parametry detekcji mają charakter roboczy i wymagają walidacji naukowej. R_app=ΔT/Q [K/W] to wskaźnik pozorny względem mocy elektrycznej, nie bezpośredni pomiar mocy transportowanej przez PHP.
 
+## Czy PHP pracuje? — nowa diagnostyka
+W zakładce **Czy PHP pracuje?** program przedstawia dla każdego epizodu O1/O2:
+- zmianę median Te, Tc oraz Δ(Te−Tc) względem odcinka 6–1 min przed epizodem;
+- status **Silne przesłanki aktywności**, **Możliwa aktywność PHP** albo **Niejednoznaczne**;
+- źródło danych Q, ograniczenia interpretacji i konkretną listę brakujących informacji;
+- przycisk przybliżający wybrany epizod na wykresie.
+
+Silne przesłanki wymagają łącznie K1, K2, spadku Te ≥1°C, wzrostu Tc ≥0,5°C, niezmiennej dodatniej mocy **zadeklarowanej przez operatora** i deklaracji porównywalnego chłodzenia, bez przerw i skoków termopar. Moc uzupełniona wyłącznie na podstawie oszacowanego ON? nie wystarcza. Wartości progowe są robocze, niezwalidowane i **nie stanowią bezpośredniego dowodu ruchu czynnika**.
+
+Eksport wybranego zawiera `ocena_aktywnosci_PHP.csv`; eksport całości dodatkowo `ocena_aktywnosci_PHP_zbiorczo.csv`. Raport HTML przedstawia ocenę obok zdarzeń i odsyła do szczegółów w CSV.
+
+**Co użytkownik może wprowadzić:** faktyczne poziomy Q i ich przedziały czasowe (najlepiej z logu zasilacza lub notatek), poprawki przedziałów, deklarację porównywalnych warunków chłodzenia. W nowych eksperymentach warto rejestrować napięcie, prąd oraz temperaturę otoczenia razem z temperaturami PHP.
+
 ## K2 po walidacji mocy i warunków chłodzenia
 
 K2 w silniku termicznym oznacza **kandydata**: spadek wygładzonej różnicy temperatur o co najmniej 15% względem lokalnej bazy, utrzymujący się przez minimum 5 min przy epizodzie K1. Nie jest to automatyczny dowód poprawy transportu ciepła.
