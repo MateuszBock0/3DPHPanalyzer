@@ -41,6 +41,7 @@ from session_store import save_session, restore_session
 from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
 from activity_assessment import assess_all
+from experiment_summary import build_experiment_summary
 
 
 def app_folder() -> Path:
@@ -174,16 +175,19 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                   wraplength=235).pack(anchor='w', padx=12, pady=(0, 15))
         self.tabs = ttk.Notebook(main)
         self.tabs.pack(fill='both', expand=True)
+        self.summary_page = ttk.Frame(self.tabs)
         self.chart_page = ttk.Frame(self.tabs)
         self.events_page = ttk.Frame(self.tabs)
         self.diagnosis_page = ttk.Frame(self.tabs)
         self.power_page = ttk.Frame(self.tabs)
         self.help_page = ttk.Frame(self.tabs)
+        self.tabs.add(self.summary_page, text='Podsumowanie')
         self.tabs.add(self.chart_page, text='Wykresy')
         self.tabs.add(self.events_page, text='Epizody / ON? OFF?')
         self.tabs.add(self.diagnosis_page, text='Czy PHP pracuje?')
         self.tabs.add(self.power_page, text='Moc Q / R')
         self.tabs.add(self.help_page, text='Metodyka i obliczenia')
+        self._build_summary_page()
         self._build_chart_page()
         self._build_events_page()
         self._build_diagnosis_page()
@@ -194,6 +198,218 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.progress = ttk.Progressbar(foot, mode='determinate', length=150)
         self.progress.pack(side='right')
         ttk.Label(foot, textvariable=self.status, style='Sub.TLabel').pack(side='left', fill='x', expand=True)
+
+    def _build_summary_page(self):
+        """One CSV, one conservative summary; never a second K1/K2 detector."""
+        root = ttk.Frame(self.summary_page)
+        root.pack(fill='both', expand=True, padx=12, pady=10)
+        header = ttk.Frame(root)
+        header.pack(fill='x', pady=(0, 6))
+        self.summary_filename = tk.StringVar(value='Wczytaj pomiar CSV, aby wyświetlić podsumowanie.')
+        ttk.Label(header, textvariable=self.summary_filename, style='Heading.TLabel').pack(anchor='w')
+        self.summary_subtitle = tk.StringVar(value='Wyniki termiczne · nie stanowią dowodu przepływu dwufazowego')
+        ttk.Label(header, textvariable=self.summary_subtitle, style='Sub.TLabel',
+                  wraplength=890).pack(anchor='w', pady=(1, 5))
+        cards = ttk.Frame(root)
+        cards.pack(fill='x', pady=(3, 8))
+        self.summary_card_vars = {}
+        for i, (key, title) in enumerate([
+            ('q','Przypisana moc Q'),
+            ('start','Pierwszy epizod / czas od ON'),
+            ('delta','Zmiana ΔT w O1'),
+            ('r','R_app podczas O1')]):
+            cards.columnconfigure(i,weight=1,uniform='summary')
+            panel=ttk.Frame(cards,style='Surface.TFrame',padding=9)
+            panel.grid(row=0,column=i,sticky='nsew',
+                       padx=(0,6) if i<3 else 0)
+            ttk.Label(panel,text=title,style='Surface.TLabel',
+                      font=('Segoe UI',9,'bold')).pack(anchor='w',pady=(0,6))
+            value=tk.StringVar(value='—')
+            detail=tk.StringVar(value='Brak wybranego eksperymentu.')
+            ttk.Label(panel,textvariable=value,background='#ffffff',
+                      foreground='#143a53',font=('Segoe UI',16,'bold'),
+                      wraplength=186).pack(anchor='w')
+            ttk.Label(panel,textvariable=detail,style='Surface.TLabel',
+                      wraplength=190,justify='left').pack(anchor='w',pady=(5,0))
+            self.summary_card_vars[key]=(value,detail)
+        timeline_box=ttk.LabelFrame(root,text='Oś eksperymentu — Q przypisane, ON?/OFF? i O1/O2',padding=7)
+        timeline_box.pack(fill='x',pady=(2,7))
+        self.summary_timeline=tk.Canvas(timeline_box,height=145,bg='white',
+                                        highlightthickness=0)
+        self.summary_timeline.pack(fill='x')
+        self.summary_timeline.bind('<Configure>',lambda *_:self._draw_summary_timeline())
+        ttk.Label(timeline_box,
+            text='Żółte: przypisane Q > 0 · niebieskie: OFF / Q=0 · zielone: epizody K1 · '
+                 'pionowe kreski: sugestie termiczne. Kliknij zielony epizod, by zobaczyć wykres.',
+            style='Sub.TLabel',wraplength=920).pack(anchor='w',pady=(2,0))
+        episodes_box=ttk.LabelFrame(root,text='Wykryte epizody O1, O2…',padding=3)
+        episodes_box.pack(fill='both',expand=True,pady=(2,3))
+        self.summary_tree=self._tree(episodes_box,[
+            ('id','Epizod',67),('start','Od [min]',90),('end','Do [min]',90),
+            ('duration','Czas [min]',93),('delta','ΔT w O [K]',109),
+            ('reduction','Zmiana ΔT [%]',113),('k2','Ocena K2',195),
+            ('activity','Przesłanki aktywności',245)],height=5)
+        self.summary_tree.bind('<<TreeviewSelect>>',self._summary_selection)
+        self.summary_tree.bind('<Double-1>',self._open_summary_episode)
+        actions=ttk.Frame(root)
+        actions.pack(fill='x',pady=(2,4))
+        ttk.Button(actions,text='Pokaż wybrany epizod na wykresie',
+                   command=self._open_summary_episode).pack(side='left',padx=(0,6))
+        ttk.Button(actions,text='Czy PHP pracuje? — szczegóły',
+                   command=lambda:self.tabs.select(self.diagnosis_page)).pack(side='left',padx=6)
+        ttk.Button(actions,text='Ustaw ON/OFF i Q',
+                   command=lambda:self.tabs.select(self.chart_page)).pack(side='left',padx=6)
+        self.summary_detail=tk.StringVar(value='Nie wybrano epizodu.')
+        ttk.Label(root,textvariable=self.summary_detail,style='Sub.TLabel',
+                  wraplength=910,justify='left').pack(anchor='w',pady=(1,2))
+
+    def _render_summary(self):
+        if self.active is None:
+            return
+        row=self._get()
+        view=build_experiment_summary(row)
+        row['summary_overview']=view
+        self.summary_filename.set(view.filename)
+        self.summary_subtitle.set(
+            f'Czas zapisu: {view.duration_min:.2f} min   ·   '
+            f'Liczba O1/O2: {view.count}   ·   '
+            f'Chłodzenie porównywalne wg operatora: {"TAK" if view.cooling_confirmed else "niepotwierdzone"}'
+            '   ·   Oscylacje temperatur nie dowodzą ruchu czynnika.')
+        self.summary_card_vars['q'][0].set(view.q_display)
+        self.summary_card_vars['q'][1].set(view.q_detail)
+        if view.first_id is None:
+            start_text='Nie wykryto O1'
+        elif view.first_from_on_min is None:
+            start_text=f'{view.first_id}: {view.first_min:.2f} min'
+        else:
+            start_text=f'{view.first_id}: +{view.first_from_on_min:.2f} min'
+        self.summary_card_vars['start'][0].set(start_text)
+        self.summary_card_vars['start'][1].set(
+            ('Czas od początku CSV; brak ON.' if view.first_from_on_min is None
+             else 'Czas od ON/ON?. ') + view.on_provenance)
+        self.summary_card_vars['delta'][0].set(view.delta_display)
+        self.summary_card_vars['delta'][1].set(view.delta_detail)
+        self.summary_card_vars['r'][0].set(view.r_display)
+        self.summary_card_vars['r'][1].set(view.r_detail)
+        selected=self.summary_tree.selection()
+        old_id=selected[0] if selected else None
+        self.summary_tree.delete(*self.summary_tree.get_children())
+        for ep in view.episodes:
+            self.summary_tree.insert('','end',iid=ep.ident,values=(
+                ep.ident,f'{ep.start_min:.2f}',f'{ep.end_min:.2f}',
+                f'{ep.duration_min:.2f}',f'{ep.delta_during_k:.2f}',
+                '—' if ep.reduction_pct is None else f'{ep.reduction_pct:+.1f}',
+                ep.k2_label,ep.activity_label))
+        ids=[ep.ident for ep in view.episodes]
+        if ids:
+            self.summary_tree.selection_set(old_id if old_id in ids else ids[0])
+            self._summary_selection()
+        else:
+            self.summary_detail.set('Brak wykrytych epizodów O1/O2; nie wyklucza to '
+                                    'przepływu w PHP. Sprawdź wykres i warunki próby.')
+        self._draw_summary_timeline()
+
+    def _summary_selection(self, *_):
+        if self.active is None:
+            return
+        selected=self.summary_tree.selection()
+        if not selected:
+            return
+        view=self._get().get('summary_overview')
+        if view is None:
+            return
+        ep=next((e for e in view.episodes if e.ident==selected[0]),None)
+        if ep is not None:
+            before='—' if ep.delta_before_k is None else f'{ep.delta_before_k:.2f} K'
+            change='—' if ep.reduction_pct is None else f'{ep.reduction_pct:+.1f}%'
+            self.summary_detail.set(
+                f'{ep.ident}: {ep.start_min:.2f}–{ep.end_min:.2f} min od CSV; '
+                f'ΔT przed: {before}, w epizodzie: {ep.delta_during_k:.2f} K; '
+                f'zmiana: {change}. {ep.k2_label}. {ep.activity_label}. '
+                'To przesłanki termiczne, nie bezpośredni pomiar ruchu czynnika.')
+
+    def _open_summary_episode(self, *_):
+        if self.active is None:
+            return
+        selected=self.summary_tree.selection()
+        if not selected:
+            return
+        row=self._get()
+        ep=next((e for e in row['analysis'].episodes
+                 if e.display_id==selected[0] and e.oscillatory),None)
+        if ep is None:
+            return
+        self.tabs.select(self.chart_page)
+        self.draw_plot()
+        t0=row['record'].t[0]
+        duration=(row['record'].t[-1]-t0)/60
+        left=max(0.,(ep.start-t0)/60-5.)
+        right=min(duration,(ep.end-t0)/60+5.)
+        for axis in self.axes:
+            axis.set_xlim(left,right)
+        self.canvas.draw_idle()
+
+    def _draw_summary_timeline(self):
+        if not hasattr(self,'summary_timeline'):
+            return
+        canvas=self.summary_timeline
+        canvas.delete('all')
+        width=max(320,canvas.winfo_width())
+        pad=55
+        right=width-18
+        if self.active is None:
+            canvas.create_text(16,60,text='Wczytaj eksperyment CSV.',anchor='w',
+                               fill='#61798b')
+            return
+        row=self._get()
+        view=row.get('summary_overview')
+        if view is None or view.duration_min<=0:
+            return
+        duration=view.duration_min
+        def coord(minutes):
+            return pad+(right-pad)*min(duration,max(0,minutes))/duration
+        canvas.create_text(6,33,text='Q(t)',anchor='w',fill='#49677c')
+        canvas.create_text(6,78,text='K1',anchor='w',fill='#49677c')
+        for ymin in (22,67):
+            canvas.create_rectangle(pad,ymin,right,ymin+23,fill='#eef2f5',outline='')
+        for stage in row.get('effective_stages',[]):
+            x1,x2=coord(stage.start_min),coord(stage.end_min)
+            if x2>x1:
+                colour='#e8bc72' if stage.q_w>0 else '#b5d9ed'
+                canvas.create_rectangle(x1,22,x2,45,fill=colour,outline='')
+                if x2-x1>43 and stage.q_w>0:
+                    canvas.create_text((x1+x2)/2,34,text=f'{stage.q_w:g} W',
+                        font=('Segoe UI',9),fill='#564829')
+        for ep in view.episodes:
+            x1,x2=coord(ep.start_min),coord(ep.end_min)
+            x2=max(x1+3,x2)
+            canvas.create_rectangle(x1,67,x2,90,fill='#73bfa6',
+                                    outline='#38826b',width=1,
+                                    tags=('episode',ep.ident))
+            if x2-x1>27:
+                canvas.create_text((x1+x2)/2,78,text=ep.ident,
+                    fill='#0d4f3d',font=('Segoe UI',9,'bold'),
+                    tags=('episode',ep.ident))
+            canvas.tag_bind(ep.ident,'<Button-1>',
+                            lambda _event,ident=ep.ident:self._timeline_open_episode(ident))
+        for suggestion in row.get('thermal_suggestions',[]):
+            x=coord(suggestion.time_min)
+            canvas.create_line(x,17,x,94,fill='#66798c',dash=(3,3))
+        for tick in range(5):
+            minutes=duration*tick/4
+            x=coord(minutes)
+            canvas.create_line(x,97,x,103,fill='#8da0ae')
+            canvas.create_text(x,116,text=f'{minutes:.0f}',fill='#526d81',
+                               font=('Segoe UI',9))
+        canvas.create_text((pad+right)/2,139,text='Czas od początku CSV [min]',
+                           fill='#526d81',font=('Segoe UI',9))
+
+    def _timeline_open_episode(self,ident):
+        if ident in self.summary_tree.get_children():
+            self.summary_tree.selection_set(ident)
+            self.summary_tree.see(ident)
+            self._summary_selection()
+            self._open_summary_episode()
 
     def _build_chart_page(self):
         top = ttk.Frame(self.chart_page)
@@ -635,6 +851,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._render_power_tree()
         self._render_events()
         self._render_diagnosis()
+        self.tabs.select(self.summary_page)
         self.chart_edit_mode = None
         self._drag_index = None
         self._drag_suggestion_index = None
@@ -646,12 +863,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         return self.record_rows[self.active]
 
     def _prompt_first_q(self):
-        """No blocking wizard: the visible inline Q field is the entry point."""
+        """Keep the summary visible; Q entry is always available on the chart."""
         if self.active is not None and not self.busy:
-            self.tabs.select(self.chart_page)
-            self.editor_q_entry.focus_set()
-            self.status.set('Wpisz Q = [   ] W z dziennika, wybierz ON i kliknij na wykresie. '
-                            'Jeśli Q nie jest znana, pozostaw pole puste.')
+            self.status.set('Podsumowanie jest gotowe. Q i ON/OFF wpiszesz w zakładce Wykresy; '
+                            'bez znanej Q nie obliczamy R_app.')
 
     def set_constant_q(self):
         """Explicit opt-in: a number Q [W] is never inferred from temperature."""
@@ -900,6 +1115,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             operator_marker_stages(row.get('timeline_events', []), duration) + row['stages'],
             row['constant_q'],
             row['constant_scope'], row['cooling_confirmed'])
+        self._render_summary()
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')
