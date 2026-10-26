@@ -734,6 +734,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
     def _add_override(self, stage):
         row = self._get()
         try:
+            duration=(row['record'].t[-1]-row['record'].t[0])/60
+            if stage.end_min > duration+1e-8:
+                raise ValueError(f'Q kończy się poza rejestracją ({duration:.3f} min).')
             validate(row['stages'] + [stage])
         except ValueError as e:
             return messagebox.showerror('Moc Q', str(e) + '\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
@@ -789,7 +792,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             'Prawy klik na wykresie otwiera menu.')
 
     def _stage_dialog(self, initial=None):
-        data = initial or PowerStage(0., (self._get()['record'].t[-1] - self._get()['record'].t[0])/60., 10.)
+        data = initial or PowerStage(0., (self._get()['record'].t[-1] - self._get()['record'].t[0])/60., None)
         dialog = tk.Toplevel(self)
         dialog.title('Etap mocy Q')
         dialog.resizable(False, False)
@@ -889,7 +892,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         row['effective_stages'] = resolve_schedule(
             row['periods'], row['constant_q'], row['stages'], duration,
             row['constant_scope'], row.get('timeline_events', []))
-        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
+        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref,
+                                   te=a.te, tc=a.tc)
         row['k2_reviews'] = review_all_k2(a, row['effective_stages'], row['cooling_confirmed'])
         row['activity_assessments'] = assess_all(
             a, row['effective_stages'],
@@ -931,6 +935,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.notes.set(caution + '  ' + ('; '.join(a.notes) if a.notes else 'Brak ostrzeżeń.'))
 
     def draw_plot(self):
+        record_key=id(self._get()['record']) if self.active is not None else None
+        old_range=(self.axes[-1].get_xlim()
+                   if record_key is not None and self._last_plot_record == record_key
+                   else None)
         for ax in self.axes: ax.clear()
         if self.active is None:
             self.axes[0].text(.5, .5, 'Wczytaj plik CSV lub ZIP, aby zobaczyć przebieg.',
@@ -1045,13 +1053,19 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         bottom.set_xlabel('Czas od początku rejestracji [min]')
         for axis in self.axes:
             axis.grid(alpha=.22)
-            axis.set_xlim(ts[0], ts[-1])
+            if old_range is not None:
+                left=max(ts[0],old_range[0])
+                right=min(ts[-1],old_range[1])
+                axis.set_xlim(left,right) if right>left else axis.set_xlim(ts[0],ts[-1])
+            else:
+                axis.set_xlim(ts[0],ts[-1])
             axis.spines[['top', 'right']].set_visible(False)
             axis.tick_params(labelsize=9)
         ax.legend(loc='upper left', fontsize=8, frameon=False, ncol=3)
         middle.legend(loc='upper left', fontsize=8, frameon=False)
         if field=='rms': bottom.legend(loc='upper left', fontsize=8, frameon=False)
         self.figure.suptitle(rec.name + ' | 3D PHP (bez PCM)', fontweight='semibold', fontsize=13, y=.997)
+        self._last_plot_record=record_key
         self.canvas.draw_idle()
 
     def save_chart(self):
