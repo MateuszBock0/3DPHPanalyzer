@@ -25,7 +25,8 @@ from matplotlib.figure import Figure
 
 os.environ['PHP_ANALYZER_GUI'] = '1'
 import php_analyzer as engine
-from power_model import PowerStage, calculate, validate
+from power_model import (PowerStage, calculate, validate, derive_estimated_periods,
+                         effective_stages)
 
 
 def app_folder() -> Path:
@@ -99,6 +100,7 @@ class PHPDesktop(tk.Tk):
         self.events = queue.Queue()
         self.busy = False
         self._plot_data = None
+        self._first_q_dialog_done = False
         self._build_ui()
         self.after(160, self._poll)
 
@@ -191,6 +193,10 @@ class PHPDesktop(tk.Tk):
         ttk.Checkbutton(controls, text='Szacowane ON?/OFF?', variable=self.show_estimated,
                         command=self.draw_plot).pack(side='left', padx=10)
         ttk.Button(controls, text='Zapisz PNG/SVG', command=self.save_chart).pack(side='right')
+        ttk.Button(top, text='Ustaw stałe Q…', command=self.set_constant_q,
+                   style='Accent.TButton').pack(side='left', padx=(0, 12))
+        self.constant_q_label = tk.StringVar(value='Q: nieustawiona · dostępne ręczne nadpisania w zakładce Moc Q / R')
+        ttk.Label(top, textvariable=self.constant_q_label, style='Sub.TLabel').pack(side='left', fill='x')
 
     def _tree(self, parent, columns):
         holder = ttk.Frame(parent)
@@ -226,20 +232,42 @@ class PHPDesktop(tk.Tk):
     def _build_power_page(self):
         body = ttk.Frame(self.power_page)
         body.pack(fill='both', expand=True, padx=12, pady=10)
-        ttk.Label(body, text='Ręcznie przypisana moc elektryczna Q(t)', style='Heading.TLabel').pack(anchor='w')
-        ttk.Label(body, text='Wartości Q nie są estymowane z termopar. Brak Q ≠ 0 W. R=(Te−Tc)/Q tylko dla Q>0.',
-                  style='Sub.TLabel').pack(anchor='w', pady=(0, 9))
-        self.power_tree = self._tree(body, [('from', 'Od [min]', 140), ('to', 'Do [min]', 140), ('power', 'Q [W]', 140)])
+        titlebar = ttk.Frame(body)
+        titlebar.pack(fill='x')
+        ttk.Label(titlebar, text='Moc Q(t) i stan zasilania', style='Heading.TLabel').pack(side='left')
+        ttk.Button(titlebar, text='Ustaw stałe Q…', command=self.set_constant_q,
+                   style='Accent.TButton').pack(side='right')
+        ttk.Label(body,
+                  text='ON?/OFF? są estymowane z temperatur i nie potwierdzają stanu elektrycznego. '
+                       'Wpisy ręczne nadpisują automatyczne Q; poza znanymi przedziałami Q pozostaje nieznane.',
+                  style='Sub.TLabel', wraplength=900).pack(anchor='w', pady=(2, 8))
+        inferred = ttk.LabelFrame(body, text='Wykryte okresy ON? / OFF? (robocze)', padding=3)
+        inferred.pack(fill='both', expand=True, pady=(0, 6))
+        self.period_tree = self._tree(inferred,
+            [('state', 'Stan?', 110), ('from', 'Od [min]', 100), ('to', 'Do [min]', 100),
+             ('q', 'Q z ustawień [W]', 145), ('note', 'Pochodzenie / uwagi', 300)])
+        inferred_actions = ttk.Frame(body)
+        inferred_actions.pack(fill='x', pady=(0, 8))
+        ttk.Button(inferred_actions, text='Nadpisz wybrany okres…',
+                   command=self.override_period).pack(side='left', padx=(0, 8))
+        ttk.Label(inferred_actions, text='Zdarzenia cieplne tworzą wstępne granice okresów, a nie log zasilacza.',
+                  style='Sub.TLabel').pack(side='left')
+        manual = ttk.LabelFrame(body, text='Ręczne nadpisania mocy Q (najwyższy priorytet)', padding=3)
+        manual.pack(fill='both', expand=True, pady=(0, 4))
+        self.power_tree = self._tree(manual,
+            [('from', 'Od [min]', 140), ('to', 'Do [min]', 140), ('power', 'Q [W]', 140)])
         buttons = ttk.Frame(body)
         buttons.pack(fill='x', pady=4)
-        ttk.Button(buttons, text='+ Dodaj etap Q', command=self.add_stage).pack(side='left', padx=3)
-        ttk.Button(buttons, text='Edytuj etap', command=self.edit_stage).pack(side='left', padx=3)
-        ttk.Button(buttons, text='Usuń etap', command=self.delete_stage).pack(side='left', padx=3)
-        ttk.Label(body, text='Odniesienie R/Rref: wybierz przedział przy stałym Q [W]', style='Sub.TLabel').pack(anchor='w', pady=(16, 4))
+        ttk.Button(buttons, text='+ Dodaj nadpisanie', command=self.add_stage).pack(side='left', padx=3)
+        ttk.Button(buttons, text='Edytuj', command=self.edit_stage).pack(side='left', padx=3)
+        ttk.Button(buttons, text='Usuń', command=self.delete_stage).pack(side='left', padx=3)
+        ttk.Label(body, text='Odniesienie R/Rref: wybierz przedział przy stałym Q [W]',
+                  style='Sub.TLabel').pack(anchor='w', pady=(10, 4))
         ref_box = ttk.Frame(body)
         ref_box.pack(fill='x')
         self.reference_enabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(ref_box, text='Włącz', variable=self.reference_enabled, command=self.update_power).pack(side='left', padx=(0, 15))
+        ttk.Checkbutton(ref_box, text='Włącz', variable=self.reference_enabled,
+                        command=self.update_power).pack(side='left', padx=(0, 15))
         ttk.Label(ref_box, text='Od [min]').pack(side='left')
         self.reference_from = tk.StringVar(value='0')
         ttk.Entry(ref_box, width=12, textvariable=self.reference_from).pack(side='left', padx=6)
@@ -248,7 +276,8 @@ class PHPDesktop(tk.Tk):
         ttk.Entry(ref_box, width=12, textvariable=self.reference_to).pack(side='left', padx=6)
         ttk.Button(ref_box, text='Przelicz R/Rref', command=self.update_power).pack(side='left', padx=12)
         self.r_info = tk.StringVar(value='R niedostępny, dopóki nie przypiszesz Q.')
-        ttk.Label(body, textvariable=self.r_info, style='Sub.TLabel', wraplength=850).pack(anchor='w', pady=12)
+        ttk.Label(body, textvariable=self.r_info, style='Sub.TLabel',
+                  wraplength=850).pack(anchor='w', pady=8)
 
     def _set_busy(self, value):
         self.busy = value
@@ -289,8 +318,12 @@ class PHPDesktop(tk.Tk):
                 self.events.put(('progress', f'Analiza {index + 1}/{len(records)}: {record.name}', (index / len(records)) * 100))
                 try:
                     a = engine.analyze(record)
+                    _segments, gaps = engine.recording_segments(record.t)
+                    periods = derive_estimated_periods(record.t, a.heating_events, gaps)
                     results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
-                                    'ref_enabled': False, 'ref_start': 0., 'ref_end': 10.})
+                                    'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
+                                    'effective_stages': [], 'ref_enabled': False,
+                                    'ref_start': 0., 'ref_end': 10.})
                 except Exception as error:
                     problems.append(f'{record.name}: {error}')
             self.events.put(('loaded', results, problems))
@@ -318,6 +351,9 @@ class PHPDesktop(tk.Tk):
                         self.listbox.select_clear(0, 'end')
                         self.listbox.select_set(len(self.record_rows) - 1)
                         self._select()
+                        if not self._first_q_dialog_done:
+                            self._first_q_dialog_done = True
+                            self.after(650, self._prompt_first_q)
                     self.status.set(f'Wczytano {added} pomiarów. ' + (f'Ostrzeżenia: {len(errors)}.' if errors else ''))
                     if errors:
                         messagebox.showwarning('Pominięte dane / ostrzeżenia', '\n'.join(errors[:12]))
@@ -347,10 +383,130 @@ class PHPDesktop(tk.Tk):
             raise ValueError('Najpierw wczytaj i wybierz pomiar.')
         return self.record_rows[self.active]
 
+    def _prompt_first_q(self):
+        if self.active is not None and not self.busy:
+            self.tabs.select(self.chart_page)
+            self.set_constant_q()
+
+    def set_constant_q(self):
+        """Explicit opt-in: a number Q [W] is never inferred from temperature."""
+        if self.active is None:
+            return messagebox.showinfo('Stała moc Q', 'Najpierw wczytaj pomiar CSV.')
+        row = self._get()
+        dialog = tk.Toplevel(self)
+        dialog.title('Stała moc grzałki Q — założenia')
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        root = ttk.Frame(dialog, padding=18)
+        root.pack(fill='both', expand=True)
+        ttk.Label(root, text='Czy chcesz przypisać stałą moc Q?',
+                  font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(0, 10))
+        ttk.Label(root, text='Moc musi pochodzić z Twoich ustawień / pomiaru zasilacza, '
+                  'nie z przebiegu temperatur. Wykryte ON?/OFF? są niepewne.',
+                  wraplength=460).pack(anchor='w')
+        field = ttk.Frame(root)
+        field.pack(anchor='w', fill='x', pady=(15, 7))
+        ttk.Label(field, text='Q [W]:').pack(side='left')
+        q_var = tk.StringVar(value='' if row['constant_q'] is None else f'{row["constant_q"]:g}')
+        entry = ttk.Entry(field, textvariable=q_var, width=18)
+        entry.pack(side='left', padx=12)
+        choice = tk.StringVar(value=row['constant_scope'])
+        ttk.Radiobutton(root, variable=choice, value='estimated',
+                        text='Tylko oszacowane ON? (OFF? = 0 W; inne okresy: Q nieznane)'
+                        ).pack(anchor='w', pady=3)
+        ttk.Radiobutton(root, variable=choice, value='full',
+                        text='Cały plik (tylko jeśli fizycznie Q było stałe przez cały pomiar)'
+                        ).pack(anchor='w', pady=3)
+        ttk.Label(root, text='Ręczne nadpisania w zakładce „Moc Q / R” mają zawsze pierwszeństwo.',
+                  wraplength=460, foreground='#61798b').pack(anchor='w', pady=(10, 5))
+        controls = ttk.Frame(root)
+        controls.pack(fill='x', pady=(14, 0))
+        def accept():
+            try:
+                power = float(q_var.get().replace(',', '.'))
+                if not math.isfinite(power) or power < 0:
+                    raise ValueError('Podaj skończoną moc Q ≥ 0 W.')
+                if choice.get() == 'estimated' and not any(p.state in ('ON?', 'OFF?', 'P_UP?')
+                                                          for p in row['periods']):
+                    messagebox.showwarning('Brak wykrytych ON/OFF',
+                        'Brak wykrytych przedziałów ON?/OFF?. Wybierz cały plik albo dodaj ręczne nadpisanie Q.',
+                        parent=dialog)
+                    return
+                row['constant_q'] = power
+                row['constant_scope'] = choice.get()
+                dialog.destroy()
+                self._render_power_tree()
+                self.update_power()
+            except ValueError as error:
+                messagebox.showerror('Stała moc Q', str(error), parent=dialog)
+        def clear():
+            row['constant_q'] = None
+            dialog.destroy()
+            self._render_power_tree()
+            self.update_power()
+        ttk.Button(controls, text='Zastosuj Q', command=accept,
+                   style='Accent.TButton').pack(side='left', padx=(0, 8))
+        ttk.Button(controls, text='Usuń stałą Q', command=clear).pack(side='left', padx=(0, 8))
+        ttk.Button(controls, text='Pomiń', command=dialog.destroy).pack(side='right')
+        entry.focus_set()
+        self.wait_window(dialog)
+
+    def override_period(self):
+        if self.active is None:
+            return
+        selected = self.period_tree.selection()
+        if not selected:
+            return messagebox.showinfo('Nadpisywanie Q', 'Wybierz wykryty okres ON?/OFF? w tabeli.')
+        row = self._get()
+        period = row['periods'][int(selected[0])]
+        suggested = (row['constant_q'] or 0.) if period.state in ('ON?', 'P_UP?') else 0.
+        st = self._stage_dialog(PowerStage(period.start_min, period.end_min, suggested))
+        if st:
+            self._add_override(st)
+
+    def _add_override(self, stage):
+        row = self._get()
+        try:
+            validate(row['stages'] + [stage])
+        except ValueError as e:
+            return messagebox.showerror('Moc Q', str(e) + '\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
+        row['stages'].append(stage)
+        self._render_power_tree()
+        self.update_power()
+
     def _render_power_tree(self):
+        row = self._get()
+        self.period_tree.delete(*self.period_tree.get_children())
+        for i, p in enumerate(row['periods']):
+            q = row['constant_q']
+            if q is None:
+                power = '— (nieznane)'
+            elif row['constant_scope'] == 'full':
+                power = f'{q:g} (cały plik)'
+            elif p.state in ('ON?', 'P_UP?'):
+                power = f'{q:g} (założone)'
+            elif p.state == 'OFF?':
+                power = '0 (założone)'
+            else:
+                power = '— (nieznane)'
+            manual = any(s.start_min < p.end_min and s.end_min > p.start_min for s in row['stages'])
+            note = p.note + (' · ręcznie nadpisane' if manual else '')
+            if p.state == 'P_UP?':
+                note = 'Możliwa zmiana Q! ' + note
+            self.period_tree.insert('', 'end', iid=str(i), values=(p.state,
+                f'{p.start_min:.3f}', f'{p.end_min:.3f}', power, note))
         self.power_tree.delete(*self.power_tree.get_children())
-        for i, st in enumerate(self._get()['stages']):
-            self.power_tree.insert('', 'end', iid=str(i), values=(f'{st.start_min:.3f}', f'{st.end_min:.3f}', f'{st.q_w:.3f}'))
+        for i, st in enumerate(row['stages']):
+            self.power_tree.insert('', 'end', iid=str(i),
+                                   values=(f'{st.start_min:.3f}', f'{st.end_min:.3f}', f'{st.q_w:.3f}'))
+        if row['constant_q'] is None:
+            text = 'Stała Q: brak · R tylko tam, gdzie ustawiono ręczne Q'
+        else:
+            text = f'Stała Q = {row["constant_q"]:g} W · ' + (
+                'przypisana do ON?/OFF?' if row['constant_scope'] == 'estimated'
+                else 'przypisana do całego pliku') + ' · nadpisania mają priorytet'
+        self.constant_q_label.set(text)
 
     def _stage_dialog(self, initial=None):
         data = initial or PowerStage(0., (self._get()['record'].t[-1] - self._get()['record'].t[0])/60., 10.)
@@ -385,9 +541,7 @@ class PHPDesktop(tk.Tk):
         proposal = PowerStage(previous.end_min, duration, previous.q_w) if previous and previous.end_min < duration else None
         st = self._stage_dialog(proposal)
         if st:
-            try: validate(stages+[st])
-            except ValueError as e: return messagebox.showerror('Moc Q', str(e))
-            stages.append(st); self._render_power_tree(); self.update_power()
+            self._add_override(st)
 
     def edit_stage(self):
         if self.active is None:
@@ -428,15 +582,20 @@ class PHPDesktop(tk.Tk):
         row = self._get()
         a = row['analysis']
         ref = ((row['ref_start'], row['ref_end']) if row['ref_enabled'] else None)
-        row['results'] = calculate(a.record.t, a.delta, row['stages'], ref)
+        duration = (a.record.t[-1] - a.record.t[0])/60
+        row['effective_stages'] = effective_stages(
+            row['periods'], row['constant_q'], row['stages'], duration, row['constant_scope'])
+        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')
             if notify: self.status.set('Uwaga: ' + r['reference_error'])
         elif r['r_ref'] is not None:
             self.r_info.set(f'Rref = {r["r_ref"]:.5g} K/W dla Q = {r["q_ref"]:g} W; względny R liczony wyłącznie przy tej samej Q.')
-        elif row['stages']:
-            self.r_info.set('R_app = ΔT/Q dla zdefiniowanych okresów Q > 0; poza nimi brak wartości R. Zmiany Q nie są przełączeniami wywnioskowanymi z temperatur.')
+        elif row['effective_stages']:
+            self.r_info.set('R_app = ΔT/Q dla przypisanych okresów Q > 0. '
+                            'Automatyczne granice ON?/OFF? są tylko oszacowaniem; '
+                            'ręczne nadpisania mają priorytet. Poza nimi Q nieznane.')
         else:
             self.r_info.set('Q nieznane — R [K/W] nie jest obliczane; wykres R proxy można oglądać osobno.')
 
@@ -517,7 +676,7 @@ class PHPDesktop(tk.Tk):
                 ax.text((h.time-t0)/60, .95, 'ON?' if h.kind.endswith('ON_EST') else
                         'OFF?' if h.kind.endswith('OFF_EST') else 'P↑?',
                         rotation=90, color=c, fontsize=8, va='top', ha='left', transform=ax.get_xaxis_transform())
-        for stage in row['stages']:
+        for stage in row['effective_stages']:
             for axis in self.axes: axis.axvline(stage.start_min, color=COLOR['q'], ls='--', lw=.65, alpha=.5)
         ax.set_ylabel('Temperatura [°C]')
         middle.set_ylabel('ΔT [K]')
@@ -567,14 +726,26 @@ class PHPDesktop(tk.Tk):
                 for t,te,tm,tc,dt,q,x,y in zip(a.record.t, a.te, a.tm, a.tc, a.delta,
                                                 r['q'],r['r'],r['relative'])]
         self._writer(out/'moc_i_opor.csv', headers, rows)
-        self._writer(out/'przedzialy_Q.csv', ['od_min', 'do_min', 'Q_W'],
+        self._writer(out/'przedzialy_Q.csv', ['od_min', 'do_min', 'Q_W', 'pochodzenie'],
+                     [[s.start_min, s.end_min, s.q_w, 'harmonogram wynikowy: automatyczny + nadpisania']
+                      for s in row['effective_stages']])
+        self._writer(out/'wykryte_okresy_ON_OFF.csv',
+                     ['od_min', 'do_min', 'stan_szacowany', 'uwagi'],
+                     [[p.start_min, p.end_min, p.state, p.note] for p in row['periods']])
+        self._writer(out/'nadpisania_Q.csv', ['od_min', 'do_min', 'Q_W'],
                      [[s.start_min, s.end_min, s.q_w] for s in row['stages']])
         config = {'filename': a.record.name, 'source': a.record.origin,
-                  'stages': [asdict(s) for s in row['stages']],
+                  'manual_overrides': [asdict(s) for s in row['stages']],
+                  'estimated_periods': [asdict(p) for p in row['periods']],
+                  'constant_q_W': row['constant_q'],
+                  'constant_q_scope': row['constant_scope'],
+                  'resolved_stages': [asdict(s) for s in row['effective_stages']],
                   'reference_enabled': row['ref_enabled'],
                   'reference_start_min': row['ref_start'], 'reference_end_min': row['ref_end'],
                   'r_ref_K_W': r['r_ref'], 'reference_power_W': r['q_ref'],
-                  'notes': 'Q is manually specified, never estimated from temperature. R_app is apparent.'}
+                  'notes': ('Q values are supplied by the operator, not inferred from temperatures. '
+                            'ON?/OFF? times are thermal estimates, not confirmed electrical events. '
+                            'Manual overrides take precedence. R_app is apparent.') }
         (out/'konfiguracja.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def _export_one(self, row, folder):
