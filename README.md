@@ -121,3 +121,16 @@ Tabela ON?/OFF? pokazuje teraz **Q wynikową po ręcznych nadpisaniach**; okres 
 Eksport uwzględnia **ocena_K2.csv**, **Q_w_okresach_ON_OFF.csv** i status kwalifikacji w zbiorczych tabelach zdarzeń. **wszystkie_epizody.csv** zawiera tylko O1/O2, natomiast **wszystkie_zdarzenia_termiczne.csv** również przejścia T1/T2. Opis kryteriów, ograniczeń i obliczeń pozostaje w ostatniej zakładce oraz na końcu **Raport.html**.
 
 Parser CSV rozpoznaje przejścia zegara dobowego z 20:00–24:00 na 00:00–04:00 bez błędnego sortowania próbek przez północ. Nie interpretuje arbitralnych cofnięć zegara jako zmiany daty; gdy zapis czasu jest niejednoznaczny, zalecany jest eksport z pełną datą.
+
+## Automatyczne sugestie i interaktywny edytor ON/OFF/Q
+
+**Nie potrzeba logu napięcia i prądu** — aplikacja korzysta z termopar PicoLog, a **rzeczywistą nastawę Q [W] wpisuje operator**. Nie wolno wyznaczać liczbowego Q z temperatur ścianek.
+
+1. Wczytaj CSV/ZIP. Program automatycznie wykryje robocze ON?/OFF?, O1/O2, zmiany termiczne, luki i wyniki K1/K2.
+2. Jeżeli chcesz szybko rozpocząć od zaproponowanych czasów, użyj **„Zatwierdź sugestie ON?/OFF?”** na dole zakładki **Wykresy**. Przed utworzeniem znaczników podajesz faktyczną moc Q dla sugerowanych ON? (jedną wartość, gdy taka sama). Znaczniki są oznaczone jako `accepted_thermal_estimate` i **nigdy nie stają się potwierdzonym logiem przełączeń**.
+3. Przyciskami **„Kliknij ON”**, **„Kliknij OFF”**, **„Zmień Q”** możesz zaznaczać zdarzenia bezpośrednio na wykresie. Po ON lub zmianie Q program pyta o rzeczywistą moc w W; OFF przyjmuje Q=0. Znacznik da się przesunąć przez przeciągnięcie lub przez wybranie go w tabeli i użycie **„Przesuń na wykresie”**. Można edytować Q, usuwać znaczniki i cofać zmiany.
+4. Program automatycznie przelicza `Q(t)`, `R_app`, `R/Rref`, K2, ocenę aktywności i wykresy. Priorytet: **ręczny przedział Q > ręczny znacznik ON/OFF/Q > automatyczne przypisanie Q według szacowanego ON?/OFF?**. Moc przed pierwszym określonym zdarzeniem pozostaje nieznana, chyba że wcześniej wybrano inną bazową stałą Q.
+5. Po korekcie aplikacja zapisuje całą konfigurację **automatycznie i atomowo na lokalnym komputerze** w katalogu `~/3DPHPAnalyzer/Sessions` (na Windows zwykle `C:\\Users\\<użytkownik>\\3DPHPAnalyzer\\Sessions`). Przy ponownym wczytaniu **tego samego pliku pomiarowego** zostanie ona automatycznie przywrócona na podstawie SHA-256 danych. Surowe CSV pozostają nienaruszone. Funkcja ręcznego importu/eksportu `konfiguracja.json` nadal działa.
+6. Eksport zawiera dodatkowy `reczne_zdarzenia_ON_OFF_Q.csv` i JSON z `timeline_events`, obok pełnego wynikowego `przedzialy_Q.csv`, metryk i metodologii.
+
+**Ważna interpretacja:** granice uzyskane z temperatur to czasy odpowiedzi cieplnej, a nie dokładne momenty zmiany stanu elektrycznego. Automatyczne propozycje to pomoc dla operatora, nie źródło prawdziwego Q. Wpisane moce traktujemy jako deklarowane nastawy, nie zmierzony strumień ciepła transportowany przez PHP.
