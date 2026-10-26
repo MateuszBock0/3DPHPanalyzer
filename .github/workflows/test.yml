@@ -1,0 +1,23 @@
+name: Offline analyzer checks
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: JavaScript syntax checks
+        run: |
+          node --check core.js
+          node --check app.js
+      - name: Core calculations and PicoLog parser tests
+        run: node --test tests/core.test.cjs
