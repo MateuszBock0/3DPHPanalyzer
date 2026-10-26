@@ -53,6 +53,17 @@ def timeline_stages(transitions, duration_min):
                                  0. if event.kind == 'OFF' else event.q_w))
     return result
 
+def operator_marker_stages(transitions, duration_min):
+    """Only explicitly placed operator markers count as user-entered Q evidence.
+
+    A bulk-accepted thermal suggestion MUST NOT gain the provenance of a
+    manually recorded electrical switch time merely by acceptance.
+    """
+    ordered = validate_transitions(transitions, duration_min) if transitions else []
+    stages = timeline_stages(ordered, duration_min)
+    return [stage for event, stage in zip(ordered, stages)
+            if event.source == 'operator']
+
 
 def overlay_stages(under, over, duration_min):
     """Overwrite known intervals only, preserving uncovered/unknown Q intervals."""
