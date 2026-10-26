@@ -28,7 +28,7 @@ import php_analyzer as engine
 from power_model import (PowerStage, calculate, validate, derive_estimated_periods,
                          effective_stages)
 from session_config import (export_configuration, validated_import,
-                            LegacyConfigurationError)
+                            LegacyConfigurationError, save_session, restore_session)
 import methodology
 
 
@@ -347,6 +347,7 @@ class PHPDesktop(tk.Tk):
             self.reference_to.set(f'{row["ref_end"]:g}')
             self._render_power_tree()
             self._recalculate()
+            self._autosave(row)
             self.draw_plot()
             self.status.set('Wczytano konfigurację: ' + filename)
             messagebox.showinfo('Konfiguracja', 'Przywrócono Q, nadpisania i referencję R/Rref.')
@@ -394,10 +395,18 @@ class PHPDesktop(tk.Tk):
                     a = engine.analyze(record)
                     _segments, gaps = engine.recording_segments(record.t)
                     periods = derive_estimated_periods(record.t, a.heating_events, gaps)
-                    results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
-                                    'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
-                                    'effective_stages': [], 'ref_enabled': False,
-                                    'ref_start': 0., 'ref_end': 10.})
+                    row = {'record': record, 'analysis': a, 'stages': [], 'results': None,
+                           'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
+                           'effective_stages': [], 'ref_enabled': False,
+                           'ref_start': 0., 'ref_end': 10., 'session_restored': False}
+                    try:
+                        restored = restore_session(row)
+                        if restored is not None:
+                            row.update(restored)
+                            row['session_restored'] = True
+                    except (OSError, ValueError) as error:
+                        problems.append(f'{record.name}: pominięto niepoprawny autozapis ({error})')
+                    results.append(row)
                 except Exception as error:
                     problems.append(f'{record.name}: {error}')
             self.events.put(('loaded', results, problems))
@@ -427,7 +436,8 @@ class PHPDesktop(tk.Tk):
                         self._select()
                         if not self._first_q_dialog_done:
                             self._first_q_dialog_done = True
-                            self.after(650, self._prompt_first_q)
+                            if not self.record_rows[-1].get('session_restored'):
+                                self.after(650, self._prompt_first_q)
                     self.status.set(f'Wczytano {added} pomiarów. ' + (f'Ostrzeżenia: {len(errors)}.' if errors else ''))
                     if errors:
                         messagebox.showwarning('Pominięte dane / ostrzeżenia', '\n'.join(errors[:12]))
@@ -640,6 +650,15 @@ class PHPDesktop(tk.Tk):
         if sel:
             self._get()['stages'].pop(int(sel[0])); self._render_power_tree(); self.update_power()
 
+    def _autosave(self, row):
+        """Save operator input locally after successful edits, never raw data."""
+        if row.get('results') is None or row['results'].get('reference_error'):
+            return
+        try:
+            save_session(row)
+        except (OSError, ValueError) as error:
+            self.status.set('Nie udało się zapisać konfiguracji: ' + str(error))
+
     def update_power(self):
         if self.active is None:
             return
@@ -650,6 +669,7 @@ class PHPDesktop(tk.Tk):
             row['ref_enabled'] = self.reference_enabled.get()
             row['ref_start'], row['ref_end'] = start, end
             self._recalculate(notify=True)
+            self._autosave(row)
             self.draw_plot()
         except ValueError as e:
             messagebox.showerror('Okno referencyjne', str(e))
@@ -661,7 +681,8 @@ class PHPDesktop(tk.Tk):
         duration = (a.record.t[-1] - a.record.t[0])/60
         row['effective_stages'] = effective_stages(
             row['periods'], row['constant_q'], row['stages'], duration, row['constant_scope'])
-        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
+        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref,
+                                   te=a.te, tc=a.tc)
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')

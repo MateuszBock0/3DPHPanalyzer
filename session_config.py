@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import math
 import struct
+import json
+import re
+from pathlib import Path
 from dataclasses import asdict
 from power_model import PowerStage, calculate, effective_stages, validate
 
@@ -97,9 +100,39 @@ def validated_import(config, row, *, legacy_confirmed=False):
         raise ValueError('Niepoprawne okno referencji.')
     resolved = effective_stages(row['periods'], constant, overrides, duration, scope)
     result = calculate(record.t, row['analysis'].delta, resolved,
-                       (start, end) if enabled else None)
+                       (start, end) if enabled else None,
+                       te=getattr(row['analysis'], 'te', None),
+                       tc=getattr(row['analysis'], 'tc', None))
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'stages': overrides, 'constant_q': constant, 'constant_scope': scope,
             'ref_enabled': enabled, 'ref_start': start, 'ref_end': end,
             'effective_stages': resolved, 'results': result}
+
+
+def autosave_path(record, directory=None):
+    """A local per-dataset JSON sidecar, keyed by the measured values, not path."""
+    root = Path(directory) if directory is not None else Path.home()/'.3dphpanalyzer'/'configurations'
+    identity = record_identity(record)
+    stem = re.sub(r'[^A-Za-z0-9._-]+', '_', Path(record.name).stem).strip('._-')[:64] or 'pomiar'
+    return root / f'{stem}_{identity["values_sha256"][:24]}.json'
+
+
+def save_session(row, directory=None):
+    """Atomically persist accepted operator settings without touching raw CSV."""
+    target = autosave_path(row['record'], directory)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(export_configuration(row), ensure_ascii=False, indent=2)
+    temporary = target.with_suffix(target.suffix + '.tmp')
+    temporary.write_text(payload, encoding='utf-8')
+    temporary.replace(target)
+    return target
+
+
+def restore_session(row, directory=None):
+    """Restore only validated configurations for exactly matching measurements."""
+    target = autosave_path(row['record'], directory)
+    if not target.is_file():
+        return None
+    config = json.loads(target.read_text(encoding='utf-8-sig'))
+    return validated_import(config, row)
