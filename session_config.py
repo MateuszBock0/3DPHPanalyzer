@@ -23,12 +23,13 @@ def export_configuration(row):
     r = row['record']
     result = row['results']
     return {
-        'schema_version': 2, 'filename': r.name, 'source': r.origin,
+        'schema_version': 3, 'filename': r.name, 'source': r.origin,
         'source_identity': record_identity(r),
         'manual_overrides': [asdict(s) for s in row['stages']],
         'estimated_periods': [asdict(p) for p in row['periods']],
         'constant_q_W': row['constant_q'],
         'constant_q_scope': row['constant_scope'],
+        'cooling_conditions_confirmed': bool(row.get('cooling_confirmed', False)),
         'resolved_stages': [asdict(s) for s in row['effective_stages']],
         'reference_enabled': row['ref_enabled'],
         'reference_start_min': row['ref_start'],
@@ -70,6 +71,9 @@ def validated_import(config, row, *, legacy_confirmed=False):
         constant = _number(constant, 'Q stałe')
         if constant < 0:
             raise ValueError('Q nie może być ujemna.')
+    cooling_confirmed = config.get('cooling_conditions_confirmed', False)
+    if type(cooling_confirmed) is not bool:
+        raise ValueError('cooling_conditions_confirmed musi być true/false.')
     scope = config.get('constant_q_scope', 'estimated')
     if scope not in ('estimated', 'full'):
         raise ValueError('Nieznany tryb stałej Q.')
@@ -101,5 +105,6 @@ def validated_import(config, row, *, legacy_confirmed=False):
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'stages': overrides, 'constant_q': constant, 'constant_scope': scope,
+            'cooling_confirmed': cooling_confirmed,
             'ref_enabled': enabled, 'ref_start': start, 'ref_end': end,
             'effective_stages': resolved, 'results': result}
