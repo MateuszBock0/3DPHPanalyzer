@@ -31,7 +31,8 @@ def export_configuration(row):
         'source_identity': record_identity(r),
         'manual_overrides': [asdict(s) for s in row['stages']],
         'timeline_events': [asdict(s) for s in row.get('timeline_events', [])],
-        'thermal_suggestions': [asdict(s) for s in row.get('thermal_suggestions', [])],
+        **({'thermal_suggestions':[asdict(s) for s in row['thermal_suggestions']]}
+           if 'thermal_suggestions' in row else {}),
         'estimated_periods': [asdict(p) for p in row['periods']],
         'constant_q_W': row['constant_q'],
         'constant_q_scope': row['constant_scope'],
@@ -139,7 +140,9 @@ def validated_import(config, row, *, legacy_confirmed=False):
         raise ValueError('Niepoprawne okno referencji.')
     resolved = resolve_schedule(periods, constant, overrides, duration, scope, timeline)
     result = calculate(record.t, row['analysis'].delta, resolved,
-                       (start, end) if enabled else None)
+                       (start, end) if enabled else None,
+                       te=getattr(row['analysis'],'te',None),
+                       tc=getattr(row['analysis'],'tc',None))
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'stages': overrides, 'timeline_events': timeline,
