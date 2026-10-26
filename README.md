@@ -10,9 +10,11 @@ Aplikacja desktopowa dla Windows, działająca podobnie do [LiftHeightAnalyzer](
 2. Nie przenoś samego `.exe` poza katalog — folder `_internal` musi zostać obok.
 3. Dwukrotnie kliknij `3DPHPAnalyzer.exe`.
 4. Wybierz CSV / archiwum ZIP zawierające CSV lub folder pomiarów.
-5. Zobacz wykresy, detekcję epizodów, wprowadź ręcznie Q [W], pobierz wyniki.
+5. Przy pierwszym wykresie możesz wybrać „Ustaw stałe Q…”.
+6. Sprawdź wykryte okresy ON?/OFF? oraz popraw przedziały Q ręcznie.
+7. Zobacz wykresy i pobierz wyniki.
 
-**Uwaga:** GitHub → „Code → Download ZIP” daje *kod źródłowy*, nie gotowe `.exe`. Gotową aplikację pobiera się z **Releases**. Po każdym pushu do `main`, GitHub Actions buduje nowy pakiet dla Windows i publikuje nową wersję oznaczoną jako „Latest”. Żaden Python nie jest wymagany do użycia gotowego ZIP. Aplikacja działa offline.
+**Uwaga:** GitHub → „Code → Download ZIP” daje *kod źródłowy*, nie gotowe `.exe`. Gotową aplikację pobiera się z **Releases**. Po każdym pushu do `main`, GitHub Actions buduje nowy pakiet dla Windows i publikuje nowe wydanie Windows jako „Latest”. Żaden Python nie jest wymagany do użycia gotowego ZIP. Aplikacja działa offline.
 
 ## Co jest w środku
 
@@ -29,6 +31,10 @@ Przypisanie kanałów wynikające z eksperymentu:
 - ch4/ch5: sekcja środkowa Tm;
 - ch6/ch7: skraplacz Tc.
 
+**Konfiguracja stałej Q na pierwszym wykresie:** po wczytaniu pierwszego pomiaru pokazuje się okno z możliwością wpisania mocy w watach. Można wybrać zastosowanie Q tylko do szacowanych okresów `ON?` (wtedy `OFF?` otrzymuje założone `0 W`, a przed rozpoznaniem `ON?` i w lukach Q pozostaje nieznane) albo do **całego pliku** — ta druga opcja jest poprawna tylko przy fizycznie stałej mocy przez cały pomiar. Podczas otwierania kolejnych pomiarów można wywołać okno przyciskiem `Ustaw stałe Q…`.
+
+**Tabela w zakładce `Moc Q / R`:** szacowane `ON?`, `OFF?` i `P↑?` są widoczne automatycznie jako okresy robocze; przy `P↑?` zaznaczono możliwość zmiany obciążenia. Nie są to rzeczywiste dane elektryczne. Po podaniu stałej Q pojawią się wstępne wartości Q. `Nadpisz wybrany okres…` i `Dodaj nadpisanie` pozwalają zmienić Q także dla podprzedziału; ręczny wpis zawsze ma priorytet, nawet w szacowanym okresie OFF. Wykryta przerwa rejestracji kończy dotychczasową estymację stanu i następny okres pozostaje nieznany aż do nowego zdarzenia.
+
 **ΔT = Te − Tc [K]**. Możesz zdefiniować różne rzeczywiste etapy grzania w zakładce `Moc Q / R` (od-do minut od początku CSV, Q [W]), w tym okresy Q=0. **Nieznana Q jest niezdefiniowana, nie zero.** Dla Q>0 aplikacja liczy **R_app = ΔT/Q [K/W]**; jest to *pozorny* opór w odniesieniu do zadanej mocy elektrycznej. Nie należy interpretować go jako bezpośredniego pomiaru strumienia ciepła rzeczywiście przenoszonego przez PHP w stanach przejściowych.
 
 R/Rref wymaga okna referencyjnego z co najmniej pięcioma próbkami i jedną dodatnią, niezmienną Q. Jest wyświetlane tylko tam, gdzie Q zgadza się z referencją.
@@ -39,7 +45,7 @@ O1/O2 to kandydaci oscylacji **temperatur ścianek**, nie dowód ruchu czynnika.
 
 ## Eksport
 
-- `Eksport wybranego`: wykresy PNG (ogólny i zbliżenia epizodów), dane pomocnicze CSV, `moc_i_opor.csv`, `przedzialy_Q.csv`, `konfiguracja.json`, zapis aktualnego widoku wykresu.
+- `Eksport wybranego`: wykresy PNG (ogólny i zbliżenia epizodów), dane pomocnicze CSV, `moc_i_opor.csv`, `przedzialy_Q.csv`, `wykryte_okresy_ON_OFF.csv`, `nadpisania_Q.csv`, `konfiguracja.json`, zapis aktualnego widoku wykresu.
 - `Eksport całości`: analogiczny komplet dla wszystkich wczytanych plików, raport `Raport.html` i zestawienie CSV.
 
 ## Uruchomienie ze źródeł (dla programistów)
