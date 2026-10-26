@@ -198,10 +198,11 @@ class PHPDesktop(tk.Tk):
         self.constant_q_label = tk.StringVar(value='Q: nieustawiona · dostępne ręczne nadpisania w zakładce Moc Q / R')
         ttk.Label(top, textvariable=self.constant_q_label, style='Sub.TLabel').pack(side='left', fill='x')
 
-    def _tree(self, parent, columns):
+    def _tree(self, parent, columns, height=10):
         holder = ttk.Frame(parent)
         holder.pack(fill='both', expand=True, padx=10, pady=10)
-        tree = ttk.Treeview(holder, columns=[c[0] for c in columns], show='headings', selectmode='browse')
+        tree = ttk.Treeview(holder, columns=[c[0] for c in columns], show='headings',
+                            selectmode='browse', height=height)
         for name, title, width in columns:
             tree.heading(name, text=title)
             tree.column(name, width=width, minwidth=75, anchor='center')
@@ -230,8 +231,19 @@ class PHPDesktop(tk.Tk):
         ttk.Label(frame, textvariable=self.notes, wraplength=950, style='Sub.TLabel').pack(fill='x', padx=16, pady=8)
 
     def _build_power_page(self):
-        body = ttk.Frame(self.power_page)
-        body.pack(fill='both', expand=True, padx=12, pady=10)
+        # The power configuration remains reachable also on smaller laptop screens.
+        scroll = tk.Canvas(self.power_page, bg='#eef3f7', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.power_page, orient='vertical', command=scroll.yview)
+        scroll.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
+        scroll.pack(side='left', fill='both', expand=True)
+        body = ttk.Frame(scroll)
+        frame_id = scroll.create_window((0, 0), window=body, anchor='nw')
+        body.bind('<Configure>', lambda *_: scroll.configure(scrollregion=scroll.bbox('all')))
+        scroll.bind('<Configure>', lambda e: scroll.itemconfigure(frame_id, width=e.width))
+        inner = ttk.Frame(body)
+        inner.pack(fill='both', expand=True, padx=12, pady=10)
+        body = inner
         titlebar = ttk.Frame(body)
         titlebar.pack(fill='x')
         ttk.Label(titlebar, text='Moc Q(t) i stan zasilania', style='Heading.TLabel').pack(side='left')
@@ -245,7 +257,8 @@ class PHPDesktop(tk.Tk):
         inferred.pack(fill='both', expand=True, pady=(0, 6))
         self.period_tree = self._tree(inferred,
             [('state', 'Stan?', 110), ('from', 'Od [min]', 100), ('to', 'Do [min]', 100),
-             ('q', 'Q z ustawień [W]', 145), ('note', 'Pochodzenie / uwagi', 300)])
+             ('q', 'Q z ustawień [W]', 145), ('note', 'Pochodzenie / uwagi', 300)],
+            height=5)
         inferred_actions = ttk.Frame(body)
         inferred_actions.pack(fill='x', pady=(0, 8))
         ttk.Button(inferred_actions, text='Nadpisz wybrany okres…',
@@ -255,7 +268,8 @@ class PHPDesktop(tk.Tk):
         manual = ttk.LabelFrame(body, text='Ręczne nadpisania mocy Q (najwyższy priorytet)', padding=3)
         manual.pack(fill='both', expand=True, pady=(0, 4))
         self.power_tree = self._tree(manual,
-            [('from', 'Od [min]', 140), ('to', 'Do [min]', 140), ('power', 'Q [W]', 140)])
+            [('from', 'Od [min]', 140), ('to', 'Do [min]', 140), ('power', 'Q [W]', 140)],
+            height=3)
         buttons = ttk.Frame(body)
         buttons.pack(fill='x', pady=4)
         ttk.Button(buttons, text='+ Dodaj nadpisanie', command=self.add_stage).pack(side='left', padx=3)
