@@ -46,6 +46,19 @@ def restore_session(row, *, base_dir=None):
         return False
     with target.open('r',encoding='utf-8') as f:
         content=json.load(f)
-    restored=validated_import(content,row)
+    try:
+        restored=validated_import(content,row)
+    except ValueError as error:
+        # Editing ON/OFF markers can invalidate a previously selected R_ref.
+        # Recover Q and all manual edits rather than discard the entire
+        # autosaved experiment. An explicit JSON import stays strictly validated.
+        if (content.get('reference_enabled') is not True
+                or 'Nie można przywrócić Rref:' not in str(error)):
+            raise
+        content=dict(content,reference_enabled=False)
+        restored=validated_import(content,row)
+        row['session_restore_note'] = (
+            'Poprzednia referencja R/Rref przestała obowiązywać po zmianie Q; '
+            'przywrócono wszystkie znaczniki i wyłączono referencję.')
     row.update(restored)
     return True
