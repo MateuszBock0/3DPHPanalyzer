@@ -792,6 +792,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             self._render_events()
             self._render_diagnosis()
             self.draw_plot()
+            self._autosave_current()
         except ValueError as e:
             messagebox.showerror('Okno referencyjne', str(e))
 
