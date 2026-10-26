@@ -30,6 +30,9 @@ from power_model import (PowerStage, calculate, validate, derive_estimated_perio
 from session_config import (export_configuration, validated_import,
                             LegacyConfigurationError)
 import methodology
+from timeline_editor import (Transition, validate_transitions, resolve_schedule,
+                             proposals_from_thermal, snap_to_recorded_sample, timeline_stages)
+from session_store import save_session, restore_session
 from episode_validation import resolved_q_label, review_all_k2
 from activity_assessment import assess_all
 
@@ -106,6 +109,10 @@ class PHPDesktop(tk.Tk):
         self.busy = False
         self._plot_data = None
         self._first_q_dialog_done = False
+        self.chart_edit_mode = None
+        self._drag_index = None
+        self._drag_lines = []
+        self._manual_line_artists = {}
         self._build_ui()
         self.after(160, self._poll)
 
@@ -190,6 +197,10 @@ class PHPDesktop(tk.Tk):
         toolbar = NavigationToolbar2Tk(self.canvas, self.chart_page, pack_toolbar=False)
         toolbar.update()
         toolbar.pack(fill='x', padx=5, pady=3)
+        self.toolbar = toolbar
+        self.canvas.mpl_connect('button_press_event', self._on_chart_press)
+        self.canvas.mpl_connect('motion_notify_event', self._on_chart_motion)
+        self.canvas.mpl_connect('button_release_event', self._on_chart_release)
         controls = ttk.Frame(self.chart_page)
         controls.pack(fill='x', padx=10, pady=4)
         ttk.Label(controls, text='Trzeci wykres:').pack(side='left')
@@ -207,6 +218,20 @@ class PHPDesktop(tk.Tk):
         ttk.Button(controls, text='Zapisz PNG/SVG', command=self.save_chart).pack(side='right')
         ttk.Button(top, text='Ustaw stałe Q…', command=self.set_constant_q,
                    style='Accent.TButton').pack(side='left', padx=(0, 12))
+        editor = ttk.Frame(self.chart_page)
+        editor.pack(fill='x', padx=10, pady=(3, 5))
+        for label, mode in [('Kliknij ON', 'ON'), ('Kliknij OFF', 'OFF'),
+                            ('Zmień Q', 'CHANGE_Q')]:
+            ttk.Button(editor, text=label,
+                command=lambda k=mode: self._set_chart_mode(k)).pack(side='left', padx=3)
+        ttk.Button(editor, text='Zatwierdź sugestie ON?/OFF?',
+            command=self.accept_thermal_proposals).pack(side='left', padx=7)
+        ttk.Button(editor, text='Cofnij', command=self.undo_timeline).pack(side='left', padx=4)
+        ttk.Button(editor, text='Anuluj', command=lambda: self._set_chart_mode(None)).pack(side='left', padx=4)
+        self.editor_hint = tk.StringVar(value='Kliknij ON/OFF na wykresie albo przeciągnij istniejący znacznik. '
+                                                'Sugestie pozostają oznaczone jako niepewne.')
+        ttk.Label(self.chart_page, textvariable=self.editor_hint, style='Sub.TLabel',
+                  wraplength=880).pack(fill='x', padx=14, pady=(0, 3))
         self.constant_q_label = tk.StringVar(value='Q: nieustawiona · dostępne ręczne nadpisania w zakładce Moc Q / R')
         ttk.Label(top, textvariable=self.constant_q_label, style='Sub.TLabel').pack(side='left', fill='x')
 
@@ -354,6 +379,22 @@ class PHPDesktop(tk.Tk):
                    command=self.override_period).pack(side='left', padx=(0, 8))
         ttk.Label(inferred_actions, text='Zdarzenia cieplne tworzą wstępne granice okresów, a nie log zasilacza.',
                   style='Sub.TLabel').pack(side='left')
+        timeline_box = ttk.LabelFrame(body,
+            text='Znaczniki ON / OFF / zmiana Q na wykresie (po ręcznym zatwierdzeniu)', padding=3)
+        timeline_box.pack(fill='both', expand=True, pady=(3, 6))
+        self.timeline_tree = self._tree(timeline_box,
+            [('time','Czas [min]',105),('kind','Zdarzenie',100),
+             ('q','Q [W]',100),('origin','Pochodzenie',230)],height=4)
+        buttons_timeline = ttk.Frame(body)
+        buttons_timeline.pack(fill='x', pady=(0, 8))
+        ttk.Button(buttons_timeline, text='Przesuń na wykresie',
+                   command=self.move_selected_transition).pack(side='left', padx=3)
+        ttk.Button(buttons_timeline, text='Usuń znacznik',
+                   command=self.delete_transition).pack(side='left', padx=3)
+        ttk.Button(buttons_timeline, text='Cofnij edycję',
+                   command=self.undo_timeline).pack(side='left', padx=3)
+        ttk.Label(body, text='Priorytet Q: odcinek ręczny > znacznik operatora > automatyczna sugestia.',
+                  style='Sub.TLabel').pack(anchor='w', pady=(0, 4))
         manual = ttk.LabelFrame(body, text='Ręczne nadpisania mocy Q (najwyższy priorytet)', padding=3)
         manual.pack(fill='both', expand=True, pady=(0, 4))
         self.power_tree = self._tree(manual,
@@ -433,6 +474,7 @@ class PHPDesktop(tk.Tk):
             self._render_events()
             self._render_diagnosis()
             self.draw_plot()
+            self._autosave_current()
             self.status.set('Wczytano konfigurację: ' + filename)
             messagebox.showinfo('Konfiguracja', 'Przywrócono Q, nadpisania i referencję R/Rref.')
         except (ValueError, OSError) as error:
@@ -483,7 +525,13 @@ class PHPDesktop(tk.Tk):
                                     'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
                                     'effective_stages': [], 'ref_enabled': False,
                                     'cooling_confirmed': False, 'k2_reviews': {}, 'activity_assessments': {},
+                                    'timeline_events': [], 'undo_events': [], 'session_restored': False,
                                     'ref_start': 0., 'ref_end': 10.})
+                    row = results[-1]
+                    try:
+                        row['session_restored'] = restore_session(row)
+                    except (OSError, ValueError, json.JSONDecodeError) as restore_error:
+                        problems.append(f'Nie przywrócono lokalnej sesji {record.name}: {restore_error}')
                 except Exception as error:
                     problems.append(f'{record.name}: {error}')
             self.events.put(('loaded', results, problems))
@@ -513,7 +561,8 @@ class PHPDesktop(tk.Tk):
                         self._select()
                         if not self._first_q_dialog_done:
                             self._first_q_dialog_done = True
-                            self.after(650, self._prompt_first_q)
+                            if not self._get()['session_restored']:
+                                self.after(650, self._prompt_first_q)
                     self.status.set(f'Wczytano {added} pomiarów. ' + (f'Ostrzeżenia: {len(errors)}.' if errors else ''))
                     if errors:
                         messagebox.showwarning('Pominięte dane / ostrzeżenia', '\n'.join(errors[:12]))
@@ -538,6 +587,8 @@ class PHPDesktop(tk.Tk):
         self._render_power_tree()
         self._render_events()
         self._render_diagnosis()
+        self.chart_edit_mode = None
+        self._drag_index = None
         self.draw_plot()
 
     def _get(self):
@@ -649,6 +700,12 @@ class PHPDesktop(tk.Tk):
                 note = 'Możliwa zmiana Q — wymaga ręcznego Q! ' + note
             self.period_tree.insert('', 'end', iid=str(i), values=(p.state,
                 f'{p.start_min:.3f}', f'{p.end_min:.3f}', power, note))
+        self.timeline_tree.delete(*self.timeline_tree.get_children())
+        for i, ev in enumerate(sorted(row.get('timeline_events', []), key=lambda x:x.time_min)):
+            self.timeline_tree.insert('', 'end', iid=str(i), values=(
+                f'{ev.time_min:.3f}', ev.kind, f'{ev.q_w:g}' if ev.q_w is not None else '0',
+                'zaakceptowana sugestia termiczna' if ev.source == 'accepted_thermal_estimate'
+                else 'wpis operatora'))
         self.power_tree.delete(*self.power_tree.get_children())
         for i, st in enumerate(row['stages']):
             self.power_tree.insert('', 'end', iid=str(i),
@@ -750,12 +807,15 @@ class PHPDesktop(tk.Tk):
         a = row['analysis']
         ref = ((row['ref_start'], row['ref_end']) if row['ref_enabled'] else None)
         duration = (a.record.t[-1] - a.record.t[0])/60
-        row['effective_stages'] = effective_stages(
-            row['periods'], row['constant_q'], row['stages'], duration, row['constant_scope'])
+        row['effective_stages'] = resolve_schedule(
+            row['periods'], row['constant_q'], row['stages'], duration,
+            row['constant_scope'], row.get('timeline_events', []))
         row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
         row['k2_reviews'] = review_all_k2(a, row['effective_stages'], row['cooling_confirmed'])
         row['activity_assessments'] = assess_all(
-            a, row['effective_stages'], row['stages'], row['constant_q'],
+            a, row['effective_stages'],
+            timeline_stages(row.get('timeline_events', []), duration) + row['stages'],
+            row['constant_q'],
             row['constant_scope'], row['cooling_confirmed'])
         r = row['results']
         if r['reference_error']:
@@ -906,6 +966,10 @@ class PHPDesktop(tk.Tk):
         self._writer(out/'wykryte_okresy_ON_OFF.csv',
                      ['od_min', 'do_min', 'stan_szacowany', 'uwagi'],
                      [[p.start_min, p.end_min, p.state, p.note] for p in row['periods']])
+        self._writer(out/'reczne_zdarzenia_ON_OFF_Q.csv',
+                     ['czas_min','rodzaj','Q_W','pochodzenie'],
+                     [[ev.time_min, ev.kind, '' if ev.q_w is None else ev.q_w, ev.source]
+                      for ev in row.get('timeline_events', [])])
         self._writer(out/'nadpisania_Q.csv', ['od_min', 'do_min', 'Q_W'],
                      [[s.start_min, s.end_min, s.q_w] for s in row['stages']])
         self._writer(out/'ocena_K2.csv',
