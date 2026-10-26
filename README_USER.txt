@@ -57,3 +57,19 @@ NIE MA pomiaru U/I. Moc Q pochodzi z wpisanych przez Ciebie nastaw.
 Akceptacja ON?/OFF? z temperatur NIE potwierdza czasu elektrycznego
 przelaczenia - moze on byc opozniony przez bezwladnosc termiczna.
 \nKONIEC CSV to tylko koniec danych, NIE automatyczne OFF!\nJesli wiesz, ze grzalka zostala wylaczona przy ostatnim pomiarze,\nuzyj przycisku 'OFF na koncu CSV (potwierdz)'.\nDane PicoLog NIE zawieraja U ani I; wpisuj nominalne Q [W] z notatek.\n
+
+N O W E :  EDYCJA PROPOZYCJI ON?/OFF?
+-----------------------------------
+1. Program pokazuje automatyczne ON?/OFF? na wykresie (przerywane linie).
+2. Zlap przerywana linie i przeciagnij na prawidlowy czas. Q nie jest potrzebna.
+3. Mozesz dodac + ON? i + OFF? przez klikniecie wykresu albo prawym przyciskiem myszy.
+4. Zaznacz sugestie w tabeli Moc Q / R, aby przesunac ja, usunac albo przywrocic automatyczne.
+5. Cofnij przywraca ostatnia korekte ON?/OFF?, rowniez usuniecie/dodanie.
+6. Zgadywane ON?/OFF? NIE sa dowodem stanu grzalki. Potwierdzone informacje
+   wprowadz osobno jako ON/OFF/Zmien Q; Q = [   ] W wypełnij tylko gdy znasz nastawę.
+7. Korekty sugestii sa w autosave i konfiguracja.json oraz eksportowanych plikach
+   sugestie_ON_OFF_po_korekcie.csv / okresy_ON_OFF_po_korekcie.csv.
+
+Przy eksporcie wielu pomiarow o tej samej nazwie foldery sa rozrozniane po zrodle.
+Przy zlym czasie (cofniecie zegara bez polnocy) plik jest odrzucany.
+Rref wymaga min. 120 s i roboczej kontroli stabilnosci Te/Tc (0,5 C/min).

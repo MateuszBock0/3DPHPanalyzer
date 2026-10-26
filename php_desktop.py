@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import hashlib
+import copy
 import math
 import os
 import queue
@@ -33,7 +35,8 @@ import methodology
 from timeline_editor import (Transition, validate_transitions, resolve_schedule,
                              proposals_from_thermal, snap_to_recorded_sample,
                              timeline_stages, operator_marker_stages,
-                             last_heating_boundary)
+                             last_heating_boundary, initial_suggestions,
+                             suggested_heating_events)
 from session_store import save_session, restore_session
 from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
@@ -114,6 +117,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._first_q_dialog_done = False
         self.chart_edit_mode = None
         self._drag_index = None
+        self._drag_suggestion_index = None
+        self._suggestion_line_artists = {}
+        self._last_plot_record = None
         self._drag_lines = []
         self._manual_line_artists = {}
         self._build_ui()
@@ -234,6 +240,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 command=lambda k=mode: self._set_chart_mode(k)).pack(side='left', padx=3)
         editor2 = ttk.Frame(self.chart_page)
         editor2.pack(fill='x', padx=10, pady=(1, 3))
+        ttk.Button(editor2, text='+ ON? (sugestia)',
+                   command=lambda:self._set_chart_mode('SUGGEST_ON')).pack(side='left', padx=3)
+        ttk.Button(editor2, text='+ OFF? (sugestia)',
+                   command=lambda:self._set_chart_mode('SUGGEST_OFF')).pack(side='left', padx=3)
         ttk.Button(editor2, text='OFF na końcu CSV (potwierdź)',
                    command=self.add_off_at_end).pack(side='left', padx=3)
         ttk.Button(editor2, text='Sugestie ON?/OFF?',
@@ -393,6 +403,23 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                    command=self.override_period).pack(side='left', padx=(0, 8))
         ttk.Label(inferred_actions, text='Zdarzenia cieplne tworzą wstępne granice okresów, a nie log zasilacza.',
                   style='Sub.TLabel').pack(side='left')
+        suggestion_box = ttk.LabelFrame(body,
+            text='Sugestie ON?/OFF? z temperatur — edytuj granice, dodaj lub usuń bez Q', padding=3)
+        suggestion_box.pack(fill='both', expand=True, pady=(3, 7))
+        self.suggestion_tree = self._tree(suggestion_box,
+            [('time','Czas [min]',115),('kind','Przejście?',125),
+             ('source','Źródło / korekta',250)], height=4)
+        sugg_actions=ttk.Frame(body); sugg_actions.pack(fill='x', pady=(0, 8))
+        ttk.Button(sugg_actions, text='Przesuń na wykresie',
+                   command=self.move_selected_suggestion).pack(side='left', padx=3)
+        ttk.Button(sugg_actions, text='Usuń sugestię',
+                   command=self.delete_selected_suggestion).pack(side='left', padx=3)
+        ttk.Button(sugg_actions, text='Przywróć automatyczne',
+                   command=self.reset_thermal_suggestions).pack(side='left', padx=3)
+        ttk.Label(body,
+            text='Szacowane ON?/OFF? można przeciągać bez Q. To nadal reakcje temperatury, '
+                 'nie czasy przełączeń elektrycznych. Moc podaj osobno w polu Q.',
+            style='Sub.TLabel', wraplength=900).pack(anchor='w', pady=(0, 4))
         timeline_box = ttk.LabelFrame(body,
             text='Znaczniki ON / OFF / zmiana Q na wykresie (po ręcznym zatwierdzeniu)', padding=3)
         timeline_box.pack(fill='both', expand=True, pady=(3, 6))
@@ -537,11 +564,14 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     a = engine.analyze(record)
                     _segments, gaps = engine.recording_segments(record.t)
                     periods = derive_estimated_periods(record.t, a.heating_events, gaps)
+                    suggestions=initial_suggestions(
+                        a.heating_events, record.t[0], (record.t[-1]-record.t[0])/60)
                     results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
                                     'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
                                     'effective_stages': [], 'ref_enabled': False,
                                     'cooling_confirmed': False, 'k2_reviews': {}, 'activity_assessments': {},
-                                    'timeline_events': [], 'undo_events': [], 'session_restored': False,
+                                    'timeline_events': [], 'thermal_suggestions': suggestions,
+                                    'undo_events': [], 'undo_history': [], 'session_restored': False,
                                     'ref_start': 0., 'ref_end': 10.})
                     row = results[-1]
                     try:
@@ -607,6 +637,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._render_diagnosis()
         self.chart_edit_mode = None
         self._drag_index = None
+        self._drag_suggestion_index = None
         self.draw_plot()
 
     def _get(self):
@@ -703,6 +734,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
     def _add_override(self, stage):
         row = self._get()
         try:
+            duration=(row['record'].t[-1]-row['record'].t[0])/60
+            if stage.end_min > duration+1e-8:
+                raise ValueError(f'Q kończy się poza rejestracją ({duration:.3f} min).')
             validate(row['stages'] + [stage])
         except ValueError as e:
             return messagebox.showerror('Moc Q', str(e) + '\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
@@ -721,6 +755,15 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 note = 'Możliwa zmiana Q — wymaga ręcznego Q! ' + note
             self.period_tree.insert('', 'end', iid=str(i), values=(p.state,
                 f'{p.start_min:.3f}', f'{p.end_min:.3f}', power, note))
+        self.suggestion_tree.delete(*self.suggestion_tree.get_children())
+        labels = {'HEATING_ON_EST':'ON?', 'HEATING_OFF_EST':'OFF?',
+                  'HEATING_INCREASE_EST':'P↑?'}
+        sources = {'automatic':'automatycznie wykryte',
+                   'operator_adjusted':'przesunięte przez operatora',
+                   'operator_added':'dodane przez operatora jako hipoteza'}
+        for i, item in enumerate(row.get('thermal_suggestions', [])):
+            self.suggestion_tree.insert('', 'end', iid=str(i), values=(
+                f'{item.time_min:.3f}', labels[item.kind], sources[item.source]))
         self.timeline_tree.delete(*self.timeline_tree.get_children())
         for i, ev in enumerate(sorted(row.get('timeline_events', []), key=lambda x:x.time_min)):
             self.timeline_tree.insert('', 'end', iid=str(i), values=(
@@ -749,7 +792,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             'Prawy klik na wykresie otwiera menu.')
 
     def _stage_dialog(self, initial=None):
-        data = initial or PowerStage(0., (self._get()['record'].t[-1] - self._get()['record'].t[0])/60., 10.)
+        data = initial or PowerStage(0., (self._get()['record'].t[-1] - self._get()['record'].t[0])/60., None)
         dialog = tk.Toplevel(self)
         dialog.title('Etap mocy Q')
         dialog.resizable(False, False)
@@ -766,6 +809,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 values = [float(v.get().replace(',', '.')) for v in vars_]
                 st = PowerStage(*values)
                 validate([st])
+                duration=(self._get()['record'].t[-1]-self._get()['record'].t[0])/60
+                if st.end_min > duration + 1e-8:
+                    raise ValueError(f'Przedział Q kończy się po końcu pomiaru ({duration:.3f} min).')
                 answer.append(st); dialog.destroy()
             except Exception as error:
                 messagebox.showerror('Błędny etap', str(error), parent=dialog)
@@ -837,12 +883,17 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
     def _recalculate(self, notify=False):
         row = self._get()
         a = row['analysis']
+        if 'thermal_suggestions' in row:
+            _segments,gaps=engine.recording_segments(a.record.t)
+            row['periods']=derive_estimated_periods(a.record.t,
+                suggested_heating_events(row['thermal_suggestions'],a.record.t[0]),gaps)
         ref = ((row['ref_start'], row['ref_end']) if row['ref_enabled'] else None)
         duration = (a.record.t[-1] - a.record.t[0])/60
         row['effective_stages'] = resolve_schedule(
             row['periods'], row['constant_q'], row['stages'], duration,
             row['constant_scope'], row.get('timeline_events', []))
-        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
+        row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref,
+                                   te=a.te, tc=a.tc)
         row['k2_reviews'] = review_all_k2(a, row['effective_stages'], row['cooling_confirmed'])
         row['activity_assessments'] = assess_all(
             a, row['effective_stages'],
@@ -874,16 +925,28 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 f'{(ep.start-first)/60:.2f}', f'{(ep.end-first)/60:.2f}',
                 f'{ep.median_delta:.2f}', row['k2_reviews'][ep.display_id].label,
                 ep.peaks))
-        for event in a.heating_events:
-            self.onoff_tree.insert('', 'end', values=(event.kind.replace('HEATING_', '').replace('_EST', '?'),
-                f'{(event.time-first)/60:.2f}',
-                f'{(event.band_start-first)/60:.2f}' if event.band_start is not None else '—',
-                f'{(event.band_end-first)/60:.2f}' if event.band_end is not None else '—',
-                event.method))
+        for suggestion in row.get('thermal_suggestions', []):
+            # Raw thermal uncertainty bands are valid only at the ORIGINAL time.
+            raw=next((e for e in a.heating_events
+                      if e.kind==suggestion.kind and
+                      abs((e.time-first)/60-suggestion.time_min)<1e-6),None)
+            is_raw=suggestion.source=='automatic' and raw is not None
+            label={'HEATING_ON_EST':'ON?','HEATING_OFF_EST':'OFF?',
+                   'HEATING_INCREASE_EST':'P↑?'}[suggestion.kind]
+            self.onoff_tree.insert('', 'end', values=(
+                label, f'{suggestion.time_min:.2f}',
+                f'{(raw.band_start-first)/60:.2f}' if is_raw and raw.band_start is not None else '—',
+                f'{(raw.band_end-first)/60:.2f}' if is_raw and raw.band_end is not None else '—',
+                (raw.method if is_raw else
+                 'KOREKTA operatora; nie potwierdza przełączenia elektrycznego')))
         caution = 'K2 termiczne jest kandydatem; status zależy od stałej Q i deklaracji chłodzenia. Nie dowodzi przepływu PHP.'
         self.notes.set(caution + '  ' + ('; '.join(a.notes) if a.notes else 'Brak ostrzeżeń.'))
 
     def draw_plot(self):
+        record_key=id(self._get()['record']) if self.active is not None else None
+        old_range=(self.axes[-1].get_xlim()
+                   if record_key is not None and self._last_plot_record == record_key
+                   else None)
         for ax in self.axes: ax.clear()
         if self.active is None:
             self.axes[0].text(.5, .5, 'Wczytaj plik CSV lub ZIP, aby zobaczyć przebieg.',
@@ -935,13 +998,27 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         segments, gaps = engine.recording_segments(rec.t)
         for left, right in gaps:
             for axis in self.axes: axis.axvspan((left-t0)/60, (right-t0)/60, color='#aebec8', alpha=.35, zorder=0)
+        self._suggestion_line_artists = {}
         if self.show_estimated.get():
-            for h in a.heating_events:
-                c = '#577697' if h.kind.endswith('ON_EST') else '#8d74a7'
-                for axis in self.axes: axis.axvline((h.time-t0)/60, color=c, ls=':', lw=1.1, alpha=.8)
-                ax.text((h.time-t0)/60, .95, 'ON?' if h.kind.endswith('ON_EST') else
-                        'OFF?' if h.kind.endswith('OFF_EST') else 'P↑?',
-                        rotation=90, color=c, fontsize=8, va='top', ha='left', transform=ax.get_xaxis_transform())
+            for p in row['periods']:
+                if p.state in ('ON?', 'OFF?'):
+                    shade=('#dfb967' if p.state=='ON?' else '#a9cade')
+                    for axis in self.axes:
+                        axis.axvspan(p.start_min,p.end_min,color=shade,alpha=.09,zorder=-8)
+            estimated=row.get('thermal_suggestions',[])
+            for i, event in enumerate(estimated):
+                c = '#577697' if event.kind=='HEATING_ON_EST' else (
+                    '#8d74a7' if event.kind=='HEATING_OFF_EST' else '#b98b3c')
+                lines=[]
+                for axis in self.axes:
+                    lines.append(axis.axvline(event.time_min,color=c,ls=':',lw=1.3,alpha=.9))
+                self._suggestion_line_artists[i]=lines
+                tag={'HEATING_ON_EST':'ON?','HEATING_OFF_EST':'OFF?',
+                     'HEATING_INCREASE_EST':'P↑?'}[event.kind]
+                if event.source!='automatic':
+                    tag+=' (korekta)'
+                ax.text(event.time_min,.95,tag,rotation=90,color=c,fontsize=8,
+                        va='top',ha='left',transform=ax.get_xaxis_transform())
         self._manual_line_artists = {}
         for i, event in enumerate(row.get('timeline_events', [])):
             manual_color = '#167957' if event.kind in ('ON', 'CHANGE_Q') else '#bf4a52'
@@ -984,13 +1061,19 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         bottom.set_xlabel('Czas od początku rejestracji [min]')
         for axis in self.axes:
             axis.grid(alpha=.22)
-            axis.set_xlim(ts[0], ts[-1])
+            if old_range is not None:
+                left=max(ts[0],old_range[0])
+                right=min(ts[-1],old_range[1])
+                axis.set_xlim(left,right) if right>left else axis.set_xlim(ts[0],ts[-1])
+            else:
+                axis.set_xlim(ts[0],ts[-1])
             axis.spines[['top', 'right']].set_visible(False)
             axis.tick_params(labelsize=9)
         ax.legend(loc='upper left', fontsize=8, frameon=False, ncol=3)
         middle.legend(loc='upper left', fontsize=8, frameon=False)
         if field=='rms': bottom.legend(loc='upper left', fontsize=8, frameon=False)
         self.figure.suptitle(rec.name + ' | 3D PHP (bez PCM)', fontweight='semibold', fontsize=13, y=.997)
+        self._last_plot_record=record_key
         self.canvas.draw_idle()
 
     def save_chart(self):
@@ -1029,9 +1112,19 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._writer(out/'przedzialy_Q.csv', ['od_min', 'do_min', 'Q_W', 'pochodzenie'],
                      [[s.start_min, s.end_min, s.q_w, 'harmonogram wynikowy: automatyczny + nadpisania']
                       for s in row['effective_stages']])
+        _seg,original_gaps=engine.recording_segments(a.record.t)
+        original_periods=derive_estimated_periods(
+            a.record.t,a.heating_events,original_gaps)
         self._writer(out/'wykryte_okresy_ON_OFF.csv',
                      ['od_min', 'do_min', 'stan_szacowany', 'uwagi'],
-                     [[p.start_min, p.end_min, p.state, p.note] for p in row['periods']])
+                     [[p.start_min, p.end_min, p.state, p.note] for p in original_periods])
+        self._writer(out/'okresy_ON_OFF_po_korekcie.csv',
+                     ['od_min','do_min','stan_szacowany_po_korekcie','uwagi'],
+                     [[p.start_min,p.end_min,p.state,p.note] for p in row['periods']])
+        self._writer(out/'sugestie_ON_OFF_po_korekcie.csv',
+                     ['czas_min','stan_termiczny','pochodzenie'],
+                     [[ev.time_min,ev.kind,ev.source]
+                      for ev in row.get('thermal_suggestions',[])])
         self._writer(out/'reczne_zdarzenia_ON_OFF_Q.csv',
                      ['czas_min','rodzaj','Q_W','pochodzenie'],
                      [[ev.time_min, ev.kind, '' if ev.q_w is None else ev.q_w, ev.source]
@@ -1050,7 +1143,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                      [[p.start_min, p.end_min, p.state,
                        resolved_q_label(row['effective_stages'], p.start_min, p.end_min)]
                       for p in row['periods']])
-        config = export_configuration(row)
+        # Bulk exports use a report-only display alias; persist the ORIGINAL
+        # dataset name and identity so its JSON still imports to the raw CSV.
+        config = export_configuration(row.get('_original_row', row))
         (out/'konfiguracja.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def _bottom_panel_export(self, row):
@@ -1080,6 +1175,25 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                            a.summary, a.to_enter])
         return result
 
+    @staticmethod
+    def _export_view(row):
+        """Stable, unique bulk-report identity without renaming the live record.
+
+        Prevent collisions for two different folders both containing test.csv.
+        The source row and its autosave fingerprint remain unchanged.
+        """
+        original=row['record']
+        key=(str(original.origin)+'\\0'+str(original.name)).encode('utf-8')
+        ident=hashlib.sha256(key).hexdigest()[:12]
+        basename=Path(original.name).stem[:65]
+        alias=f'{basename}__{ident}{Path(original.name).suffix or ".csv"}'
+        clone_record=copy.copy(original)
+        clone_record.name=alias
+        clone_analysis=copy.copy(row['analysis'])
+        clone_analysis.record=clone_record
+        return dict(row,record=clone_record,analysis=clone_analysis,
+                    _original_row=row)
+
     def _export_one(self, row, folder):
         a = row['analysis']
         folder.mkdir(parents=True, exist_ok=True)
@@ -1088,10 +1202,11 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         engine.write_png(a, plotdir, bottom_values=values,
                          bottom_label=label, bottom_level_one=level,
                          episode_reviews=row['k2_reviews'],
-                         operator_events=row.get('timeline_events', []))
+                         operator_events=row.get('timeline_events', []),
+                         thermal_suggestions=row.get('thermal_suggestions', []))
         (folder/'panel_wykresu.txt').write_text(
             'Trzeci panel: ' + label + '\nQ jest wpisywana przez operatora. '
-            'ON?/OFF? to estymacja z temperatur.\n', encoding='utf-8')
+            'ON?/OFF? to estymacja z temperatur, możliwa ręczna korekta.\n', encoding='utf-8')
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
@@ -1118,8 +1233,11 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if not where: return
         out = Path(where)/'PHP_Results'; out.mkdir(parents=True, exist_ok=True)
         try:
+            # Every exported report gets a deterministic source-specific alias.
+            # Do not mutate the live GUI records or their saved configurations.
+            views=[self._export_view(row) for row in self.record_rows]
             analyses, idx = [], {}
-            for row in self.record_rows:
+            for row in views:
                 r = row['analysis']
                 folder = out/path_safe(r.record.name)
                 self._export_one(row, folder)
@@ -1136,18 +1254,18 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             self._writer(out/'ocena_aktywnosci_PHP_zbiorczo.csv',
                          ['plik','epizod','ocena','status','delta_Te_C','delta_Tc_C',
                           'delta_roznicy_K','Q_zrodlo','Q_W','przeslanki','co_sprawdzic'],
-                         [entry for row in self.record_rows
+                         [entry for row in views
                           for entry in self._diagnosis_export_rows(row)])
             assessment_lookup = {(row['record'].name, ep.display_id):
                                  row['k2_reviews'][ep.display_id].code
-                                 for row in self.record_rows for ep in row['analysis'].episodes
+                                 for row in views for ep in row['analysis'].episodes
                                  if ep.oscillatory}
             for event in all_events:
                 event['K2_weryfikacja_Q_chlodzenia'] = assessment_lookup.get(
                     (event['plik'], event['epizod']), 'NIE_DOTYCZY')
                 event['Ocena_aktywnosci_PHP'] = next(
                     (row['activity_assessments'][event['epizod']].code
-                     for row in self.record_rows
+                     for row in views
                      if row['record'].name == event['plik']
                      and event['epizod'] in row['activity_assessments']),
                     'NIE_DOTYCZY')
@@ -1156,7 +1274,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     (event['plik'], event['epizod']), 'NIE_DOTYCZY')
                 event['Ocena_aktywnosci_PHP'] = next(
                     (row['activity_assessments'][event['epizod']].code
-                     for row in self.record_rows
+                     for row in views
                      if row['record'].name == event['plik']
                      and event['epizod'] in row['activity_assessments']),
                     'NIE_DOTYCZY')
@@ -1164,7 +1282,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 key = summary_row['plik']
                 summary_row['K2_warunkowe_przy_Q_i_chlodzeniu'] = sum(
                     review.code == 'K2_WARUNKOWE'
-                    for row in self.record_rows if row['record'].name == key
+                    for row in views if row['record'].name == key
                     for review in row['k2_reviews'].values())
             engine.write_csv(out/'wszystkie_epizody.csv', episode_events,
                              list(episode_events[0]) if episode_events else ['plik','epizod'])
@@ -1177,13 +1295,13 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             gaps = engine.csv_gaps(analyses)
             engine.write_csv(out/'luki_rejestracji.csv', gaps,
                              list(gaps[0]) if gaps else ['plik','od_min','do_min'])
-            label = self._bottom_panel_export(self.record_rows[0])[1]
+            label = self._bottom_panel_export(views[0])[1]
             with (out/'Raport.html').open('w', encoding='utf-8') as f:
                 f.write(engine.render_html(analyses, summary, events, idx, [], [],
                       desktop_mode=True, panel_label=label,
                       methodology_html=methodology.as_html(embedded=True),
                       activity_reviews={(row['record'].name, ident): assessment
-                                        for row in self.record_rows
+                                        for row in views
                                         for ident, assessment in row['activity_assessments'].items()}))
             (out/'Metodyka_obliczen.html').write_text(methodology.as_html(), encoding='utf-8')
             self._writer(out/'podsumowanie_testow.csv', list(summary[0]) if summary else [],

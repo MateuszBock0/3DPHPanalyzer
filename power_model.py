@@ -137,7 +137,9 @@ def effective_stages(periods: list[EstimatedPeriod], constant_q: Optional[float]
     return result
 
 
-def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optional[tuple[float, float]] = None):
+def calculate(t_seconds, delta_k, stages: list[PowerStage],
+              ref_range_min: Optional[tuple[float, float]] = None,
+              *, te=None, tc=None, max_ref_trend_c_min=0.5, min_ref_duration_s=120):
     """Return sampled Q, R_app [K/W], R/R_ref, and reference details.
 
     For normalization a single constant Q>0 must hold in the reference window;
@@ -146,6 +148,12 @@ def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optio
     stages = validate(stages)
     if len(t_seconds) != len(delta_k):
         raise ValueError('Niepasujące długości sygnałów.')
+    if (te is None) != (tc is None):
+        raise ValueError('Sprawdzenie stabilności Rref wymaga równocześnie Te i Tc.')
+    if te is not None and (len(te) != len(t_seconds) or len(tc) != len(t_seconds)):
+        raise ValueError('Niepasujące długości temperatur dla Rref.')
+    if max_ref_trend_c_min <= 0 or min_ref_duration_s <= 0:
+        raise ValueError('Parametry kontroli stabilności Rref muszą być dodatnie.')
     boundaries = [s.start_min for s in stages]
     origin = float(t_seconds[0]) if t_seconds else 0.0
     q, rr_abs = [], []
@@ -188,7 +196,34 @@ def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optio
                         for x, y in zip(t_seconds, t_seconds[1:]))
                     if gap_inside:
                         reference_error = 'R_ref: okno odniesienia przecina lukę rejestracji danych.'
-                    else:
+                    elif te is not None and (b-a)*60 < min_ref_duration_s - 1e-7:
+                        reference_error = (
+                            f'R_ref: okno quasi-ustalone musi trwać co najmniej {min_ref_duration_s:g} s.')
+                    elif te is not None:
+                        # Use medians of early/late quarters to limit the impact
+                        # of individual sensor spikes. This is a WORKING screening
+                        # criterion, not proof of physical steady state.
+                        width=max(1,len(in_window)//4)
+                        first,last=in_window[:width],in_window[-width:]
+                        centre_first=_median([float(t_seconds[i]) for i in first])
+                        centre_last=_median([float(t_seconds[i]) for i in last])
+                        dt_minutes=(centre_last-centre_first)/60
+                        if dt_minutes <= 0:
+                            reference_error = 'R_ref: niewystarczający zakres czasu.'
+                        else:
+                            rates=[]
+                            for signal in (te,tc):
+                                samples=[signal[i] for i in first+last]
+                                if any(not math.isfinite(z) for z in samples):
+                                    reference_error='R_ref: niepoprawna temperatura.'
+                                    break
+                                rates.append(abs((_median([signal[i] for i in last])-
+                                                  _median([signal[i] for i in first]))/dt_minutes))
+                            if reference_error is None and max(rates)>max_ref_trend_c_min:
+                                reference_error=(
+                                    f'R_ref: trend Te/Tc {max(rates):.3f} °C/min przekracza '
+                                    f'roboczy próg {max_ref_trend_c_min:g} °C/min.')
+                    if reference_error is None:
                         reference_q = target_q
                         reference_r = _median([rr_abs[i] for i in in_window])
                         if not math.isfinite(reference_r) or abs(reference_r) <= 1e-12:

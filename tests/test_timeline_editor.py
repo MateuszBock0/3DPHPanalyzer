@@ -7,7 +7,9 @@ from types import SimpleNamespace
 
 from timeline_editor import (Transition, validate_transitions, timeline_stages,
                              overlay_stages, resolve_schedule, proposals_from_thermal,
-                             snap_to_recorded_sample, last_heating_boundary)
+                             snap_to_recorded_sample, last_heating_boundary,
+                             ThermalSuggestion, validate_suggestions, initial_suggestions,
+                             suggested_heating_events)
 from power_model import PowerStage, EstimatedPeriod, calculate
 from session_config import export_configuration, validated_import
 from session_store import save_session, restore_session, session_path
@@ -101,6 +103,36 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             proposals_from_thermal(events,0,20,None)
 
+    def test_thermal_proposals_can_be_moved_added_deleted_without_q(self):
+        original=[SimpleNamespace(time=300,kind='HEATING_ON_EST'),
+                  SimpleNamespace(time=600,kind='HEATING_OFF_EST')]
+        proposals=initial_suggestions(original,0,20)
+        self.assertEqual([(s.time_min,s.kind,s.source) for s in proposals],
+            [(5.,'HEATING_ON_EST','automatic'),(10.,'HEATING_OFF_EST','automatic')])
+        changed=validate_suggestions([
+            ThermalSuggestion(5.5,'HEATING_ON_EST','operator_adjusted'),
+            ThermalSuggestion(10,'HEATING_OFF_EST','automatic'),
+            ThermalSuggestion(17,'HEATING_ON_EST','operator_added')],20)
+        self.assertEqual([(x.kind,x.time) for x in suggested_heating_events(changed,0)],
+                         [(x.kind,60*x.time_min) for x in changed])
+        self.assertEqual(len(validate_suggestions(changed[:-1],20)),2)
+        with self.assertRaises(ValueError):
+            validate_suggestions(changed+[ThermalSuggestion(10,'HEATING_ON_EST')],20)
+
+    def test_accepted_estimated_off_not_falsely_marked_operator(self):
+        t=Transition(12,'OFF',0,'accepted_thermal_estimate')
+        boundary=last_heating_boundary([t],20)
+        self.assertFalse(boundary[2])
+        self.assertIn('sugestia',boundary[1])
+
+    def test_snap_rejects_short_and_long_logger_gaps(self):
+        for gap in (15,30,60):
+            with self.subTest(gap=gap):
+                times=list(range(30))+list(range(30+gap, 160+gap))
+                target=(29+(gap+1)/2)/60
+                with self.assertRaisesRegex(ValueError,'lukę'):
+                    snap_to_recorded_sample(target,times)
+
     def test_snap_to_sample_does_not_jump_across_gap(self):
         times=list(range(0,120,5))+list(range(200,300,5))
         self.assertAlmostEqual(snap_to_recorded_sample(1.01,times),1.)
@@ -126,9 +158,24 @@ class SessionTests(unittest.TestCase):
                   'ref_start':0.,'ref_end':4.,
                   'results':calculate(self.t,[5.]*len(self.t),self.resolved)}
 
+    def test_edited_thermal_proposals_survive_json_roundtrip(self):
+        edits=[ThermalSuggestion(1.5,'HEATING_ON_EST','operator_adjusted'),
+               ThermalSuggestion(8,'HEATING_OFF_EST','operator_added')]
+        row=dict(self.row,thermal_suggestions=edits)
+        cfg=export_configuration(row)
+        self.assertEqual(cfg['schema_version'],5)
+        restored=validated_import(cfg,row)
+        self.assertEqual(restored['thermal_suggestions'],edits)
+        self.assertEqual(restored['periods'][0].state,'UNKNOWN')
+        self.assertEqual(restored['periods'][1].state,'ON?')
+        old=dict(cfg)
+        old.pop('thermal_suggestions')
+        old['schema_version']=4
+        self.assertEqual(validated_import(old,self.row)['effective_stages'],self.resolved)
+
     def test_json_roundtrip_for_markers(self):
         data=export_configuration(self.row)
-        self.assertEqual(data['schema_version'],4)
+        self.assertEqual(data['schema_version'],5)
         restored=validated_import(data,self.row)
         self.assertEqual(restored['timeline_events'],self.timeline)
         self.assertEqual(restored['effective_stages'],self.resolved)

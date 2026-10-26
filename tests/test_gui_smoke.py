@@ -7,7 +7,8 @@ import unittest
 import os
 from types import SimpleNamespace
 
-from power_model import derive_estimated_periods
+from power_model import derive_estimated_periods, PowerStage
+from timeline_editor import initial_suggestions, ThermalSuggestion
 
 
 @unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt',
@@ -29,7 +30,10 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
              'effective_stages':[],'ref_enabled':False,
              'ref_start':0.,'ref_end':2.,'cooling_confirmed':False,
              'k2_reviews':{},'activity_assessments':{},
-             'timeline_events':[],'undo_events':[],'session_restored':False}
+             'timeline_events':[],
+             'thermal_suggestions':initial_suggestions(
+                 analysis.heating_events,t[0],(t[-1]-t[0])/60),
+             'undo_events':[],'session_restored':False}
         self.app.record_rows=[row]
         self.app.listbox.insert('end',record.name)
         self.app.listbox.select_set(0)
@@ -53,6 +57,57 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
             [PowerStage(.5,duration,12.5)])
         self.assertEqual(len(self.app._manual_line_artists),2)
         self.app.update()
+
+    def test_thermal_suggestion_drag_add_delete_undo_no_Q_needed(self):
+        self.assertEqual(self.app.editor_q_var.get(),'')
+        self.app._add_suggestion('HEATING_ON_EST',.65)
+        self.app._add_suggestion('HEATING_OFF_EST',1.65)
+        self.assertEqual(len(self.app._get()['thermal_suggestions']),2)
+        self.assertEqual(len(self.app.suggestion_tree.get_children()),2)
+        self.assertEqual(self.app._get()['periods'][1].state,'ON?')
+        self.assertEqual(self.app._get()['results']['q'][60],None)
+        axis=self.app.axes[0]
+        x=axis.transData.transform((.65,0))[0]
+        press=SimpleNamespace(button=1,x=x,xdata=.65,inaxes=axis)
+        self.app._on_chart_press(press)
+        self.assertEqual(self.app._drag_suggestion_index,0)
+        self.app._on_chart_release(SimpleNamespace(button=1,x=x+10,xdata=.75,inaxes=axis))
+        self.assertAlmostEqual(self.app._get()['thermal_suggestions'][0].time_min,.75)
+        self.assertEqual(self.app._get()['thermal_suggestions'][0].source,'operator_adjusted')
+        self.app._delete_suggestion(1)
+        self.assertEqual(len(self.app._get()['thermal_suggestions']),1)
+        self.app.undo_timeline()
+        self.assertEqual(len(self.app._get()['thermal_suggestions']),2)
+        self.app.reset_thermal_suggestions()
+        self.assertEqual(len(self.app._get()['thermal_suggestions']),0)
+
+    def test_distinct_export_names_preserve_original_config(self):
+        original=self.app._get()
+        second=dict(original)
+        from copy import copy
+        second_record=copy(original['record'])
+        second_record.origin='another/folder/synthetic.csv'
+        second['record']=second_record
+        a=self.app._export_view(original)
+        b=self.app._export_view(second)
+        self.assertNotEqual(a['record'].name,b['record'].name)
+        self.assertEqual(original['record'].name,'synthetic.csv')
+        self.assertEqual(a['_original_row']['record'].name,'synthetic.csv')
+
+    def test_reject_manual_Q_stage_beyond_record(self):
+        from unittest.mock import patch
+        duration=self.app._duration_min()
+        with patch('php_desktop.messagebox.showerror'):
+            self.app._add_override(PowerStage(0,duration+5,10))
+        self.assertEqual(self.app._get()['stages'],[])
+
+    def test_plot_zoom_retained_after_timeline_edit(self):
+        self.app.axes[-1].set_xlim(.25,.9)
+        self.app.editor_q_var.set('10')
+        self.app._add_marker('ON',.5)
+        left,right=self.app.axes[-1].get_xlim()
+        self.assertAlmostEqual(left,.25)
+        self.assertAlmostEqual(right,.9)
 
     def test_manual_on_off_redraw_table_and_undo(self):
         self.app.editor_q_var.set('10')
