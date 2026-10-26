@@ -1050,7 +1050,10 @@ class PHPDesktop(tk.Tk):
             with (out/'Raport.html').open('w', encoding='utf-8') as f:
                 f.write(engine.render_html(analyses, summary, events, idx, [], [],
                       desktop_mode=True, panel_label=label,
-                      methodology_html=methodology.as_html(embedded=True)))
+                      methodology_html=methodology.as_html(embedded=True),
+                      activity_reviews={(row['record'].name, ident): assessment
+                                        for row in self.record_rows
+                                        for ident, assessment in row['activity_assessments'].items()}))
             (out/'Metodyka_obliczen.html').write_text(methodology.as_html(), encoding='utf-8')
             self._writer(out/'podsumowanie_testow.csv', list(summary[0]) if summary else [],
                          [[x.get(k, '') for k in summary[0]] for x in summary] if summary else [])
