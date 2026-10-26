@@ -1111,7 +1111,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                      [[p.start_min, p.end_min, p.state,
                        resolved_q_label(row['effective_stages'], p.start_min, p.end_min)]
                       for p in row['periods']])
-        config = export_configuration(row)
+        # Bulk exports use a report-only display alias; persist the ORIGINAL
+        # dataset name and identity so its JSON still imports to the raw CSV.
+        config = export_configuration(row.get('_original_row', row))
         (out/'konfiguracja.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def _bottom_panel_export(self, row):
@@ -1140,6 +1142,25 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                            a.power_source, a.power_w if a.power_w is not None else '',
                            a.summary, a.to_enter])
         return result
+
+    @staticmethod
+    def _export_view(row):
+        """Stable, unique bulk-report identity without renaming the live record.
+
+        Prevent collisions for two different folders both containing test.csv.
+        The source row and its autosave fingerprint remain unchanged.
+        """
+        original=row['record']
+        key=(str(original.origin)+'\\0'+str(original.name)).encode('utf-8')
+        ident=hashlib.sha256(key).hexdigest()[:12]
+        basename=Path(original.name).stem[:65]
+        alias=f'{basename}__{ident}{Path(original.name).suffix or ".csv"}'
+        clone_record=copy.copy(original)
+        clone_record.name=alias
+        clone_analysis=copy.copy(row['analysis'])
+        clone_analysis.record=clone_record
+        return dict(row,record=clone_record,analysis=clone_analysis,
+                    _original_row=row)
 
     def _export_one(self, row, folder):
         a = row['analysis']
@@ -1179,8 +1200,11 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if not where: return
         out = Path(where)/'PHP_Results'; out.mkdir(parents=True, exist_ok=True)
         try:
+            # Every exported report gets a deterministic source-specific alias.
+            # Do not mutate the live GUI records or their saved configurations.
+            views=[self._export_view(row) for row in self.record_rows]
             analyses, idx = [], {}
-            for row in self.record_rows:
+            for row in views:
                 r = row['analysis']
                 folder = out/path_safe(r.record.name)
                 self._export_one(row, folder)
@@ -1197,18 +1221,18 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             self._writer(out/'ocena_aktywnosci_PHP_zbiorczo.csv',
                          ['plik','epizod','ocena','status','delta_Te_C','delta_Tc_C',
                           'delta_roznicy_K','Q_zrodlo','Q_W','przeslanki','co_sprawdzic'],
-                         [entry for row in self.record_rows
+                         [entry for row in views
                           for entry in self._diagnosis_export_rows(row)])
             assessment_lookup = {(row['record'].name, ep.display_id):
                                  row['k2_reviews'][ep.display_id].code
-                                 for row in self.record_rows for ep in row['analysis'].episodes
+                                 for row in views for ep in row['analysis'].episodes
                                  if ep.oscillatory}
             for event in all_events:
                 event['K2_weryfikacja_Q_chlodzenia'] = assessment_lookup.get(
                     (event['plik'], event['epizod']), 'NIE_DOTYCZY')
                 event['Ocena_aktywnosci_PHP'] = next(
                     (row['activity_assessments'][event['epizod']].code
-                     for row in self.record_rows
+                     for row in views
                      if row['record'].name == event['plik']
                      and event['epizod'] in row['activity_assessments']),
                     'NIE_DOTYCZY')
@@ -1217,7 +1241,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     (event['plik'], event['epizod']), 'NIE_DOTYCZY')
                 event['Ocena_aktywnosci_PHP'] = next(
                     (row['activity_assessments'][event['epizod']].code
-                     for row in self.record_rows
+                     for row in views
                      if row['record'].name == event['plik']
                      and event['epizod'] in row['activity_assessments']),
                     'NIE_DOTYCZY')
@@ -1225,7 +1249,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 key = summary_row['plik']
                 summary_row['K2_warunkowe_przy_Q_i_chlodzeniu'] = sum(
                     review.code == 'K2_WARUNKOWE'
-                    for row in self.record_rows if row['record'].name == key
+                    for row in views if row['record'].name == key
                     for review in row['k2_reviews'].values())
             engine.write_csv(out/'wszystkie_epizody.csv', episode_events,
                              list(episode_events[0]) if episode_events else ['plik','epizod'])
@@ -1238,13 +1262,13 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             gaps = engine.csv_gaps(analyses)
             engine.write_csv(out/'luki_rejestracji.csv', gaps,
                              list(gaps[0]) if gaps else ['plik','od_min','do_min'])
-            label = self._bottom_panel_export(self.record_rows[0])[1]
+            label = self._bottom_panel_export(views[0])[1]
             with (out/'Raport.html').open('w', encoding='utf-8') as f:
                 f.write(engine.render_html(analyses, summary, events, idx, [], [],
                       desktop_mode=True, panel_label=label,
                       methodology_html=methodology.as_html(embedded=True),
                       activity_reviews={(row['record'].name, ident): assessment
-                                        for row in self.record_rows
+                                        for row in views
                                         for ident, assessment in row['activity_assessments'].items()}))
             (out/'Metodyka_obliczen.html').write_text(methodology.as_html(), encoding='utf-8')
             self._writer(out/'podsumowanie_testow.csv', list(summary[0]) if summary else [],
