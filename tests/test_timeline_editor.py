@@ -109,6 +109,17 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(empty['effective_stages'],self.resolved)
             self.assertEqual(target,session_path(self.record,base_dir=temp))
 
+    def test_autosave_recovers_Q_if_reference_invalidated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            problematic=dict(self.row,ref_enabled=True,ref_start=4.5,ref_end=6.)
+            save_session(problematic,base_dir=temp)
+            reloaded=dict(self.row,ref_enabled=False,timeline_events=[],
+                          stages=[],constant_q=None)
+            self.assertTrue(restore_session(reloaded,base_dir=temp))
+            self.assertEqual(reloaded['timeline_events'],self.timeline)
+            self.assertFalse(reloaded['ref_enabled'])
+            self.assertIn('wyłączono referencję',reloaded['session_restore_note'])
+
     def test_changed_measurement_never_restores_previous_configuration(self):
         with tempfile.TemporaryDirectory() as temp:
             save_session(self.row,base_dir=temp)
