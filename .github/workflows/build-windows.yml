@@ -71,11 +71,7 @@ jobs:
         run: |
           $current = gh api 'repos/${{ github.repository }}/git/ref/heads/main' --jq '.object.sha'
           if ($current -ne '${{ github.sha }}') { Write-Host 'Skipping obsolete build'; exit 0 }
-          gh release view latest 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create latest --target "${{ github.sha }}" --title '3D PHP Analyzer — najnowsza wersja Windows' --notes 'Automatycznie zbudowana wersja przenośna; rozpakuj ZIP i uruchom 3DPHPAnalyzer.exe.' --prerelease
-          }
-          gh release upload latest 3DPHPAnalyzer_Windows_x64.zip --clobber
+          gh release create "build-${{ github.run_number }}" 3DPHPAnalyzer_Windows_x64.zip --target "${{ github.sha }}" --title '3D PHP Analyzer — Windows' --notes 'Automatyczny build przenośny. Rozpakuj ZIP i uruchom 3DPHPAnalyzer.exe.' --latest
       - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
