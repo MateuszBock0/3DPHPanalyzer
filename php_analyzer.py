@@ -174,6 +174,26 @@ def parse_time(value: str) -> float:
     return float(fields[0])
 
 
+def unwrap_midnight_clock(t_seconds: list[float]) -> list[float]:
+    """Unwrap unmistakable HH:MM:SS midnight rolls, preserving acquisition order.
+
+    A large jump 20:00–24:00 -> 00:00–04:00 is interpreted as a day change.
+    Other backward jumps are NOT silently treated as a new day. For absolute
+    elapsed times >24 h no rollover is applied unless the clock resets.
+    """
+    out = []
+    offset = 0.
+    prev = None
+    for raw in t_seconds:
+        if prev is not None and (20 * 3600 <= prev < 24 * 3600
+                                 and 0 <= raw <= 4 * 3600
+                                 and prev - raw >= 12 * 3600):
+            offset += 86400.
+        out.append(raw + offset)
+        prev = raw
+    return out
+
+
 def parse_csv(data: bytes, name: str, origin: str) -> Record:
     content = data.decode('utf-8-sig', errors='replace')
     # Export PicoLog has comma separators and decimal commas in quoted cells.
@@ -206,6 +226,7 @@ def parse_csv(data: bytes, name: str, origin: str) -> Record:
             bad += 1
     if len(tt) < 120:
         raise ValueError('Mniej niż 120 poprawnych próbek')
+    tt = unwrap_midnight_clock(tt)
     if any(b < a for a, b in zip(tt, tt[1:])):
         pairs = sorted(zip(tt, yy), key=lambda p: p[0])
         tt, yy = [x[0] for x in pairs], [x[1] for x in pairs]
@@ -798,10 +819,12 @@ def csv_summary(analyses: list[Analysis]):
     return rows
 
 
-def csv_episodes(analyses: list[Analysis]):
+def csv_episodes(analyses: list[Analysis], *, oscillatory_only: bool = False):
     rows = []
     for r in analyses:
         for e in r.episodes:
+            if oscillatory_only and not e.oscillatory:
+                continue
             rows.append({
                 'plik': r.record.name, 'epizod': e.display_id,
                 'fragment_innego_pliku': r.record.fragment_of,
