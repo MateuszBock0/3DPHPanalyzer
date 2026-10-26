@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import median
-from math import isfinite
+from math import isfinite, isclose
 import php_analyzer as engine
 from episode_validation import stable_positive_power
 
@@ -88,8 +88,9 @@ def assess_episode(analysis, ep, resolved_stages, manual_stages=(),
     qa,q_reason=stable_positive_power(resolved_stages,
                       (lo-origin)/60,(ep.end-origin)/60)
     # An inferred thermal ON? is NOT electrically verified Q(t).
-    manually_covered=(qa is not None and stable_positive_power(
-        manual_stages,(lo-origin)/60,(ep.end-origin)/60)[0] is not None)
+    manual_q=stable_positive_power(manual_stages,(lo-origin)/60,(ep.end-origin)/60)[0]
+    manually_covered=(qa is not None and manual_q is not None
+                      and isclose(qa,manual_q,rel_tol=0,abs_tol=1e-9))
     declared_full=qa is not None and constant_scope=='full' and constant_q is not None
     declared=manually_covered or declared_full
     power_source=('Q wpisana dla całego okna' if manually_covered else
@@ -138,7 +139,7 @@ def assess_episode(analysis, ep, resolved_stages, manual_stages=(),
     return ActivityAssessment(code,label,dte,dtc,ddelta,power_source,qa,
                               '; '.join(reasons)+'. Bez bezpośredniego potwierdzenia ruchu czynnika.',
                               '; '.join(needs) if needs else
-                              'Powtórz próbę; przy możliwości dodaj zsynchronizowany log U/I i temperaturę otoczenia')
+                              'Powtórz próbę; sprawdź ręczne notatki Q, chwile przełączeń i warunki chłodzenia')
 
 
 def assess_all(analysis, resolved_stages, manual_stages=(), constant_q=None,
