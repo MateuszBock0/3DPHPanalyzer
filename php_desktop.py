@@ -31,7 +31,8 @@ from session_config import (export_configuration, validated_import,
                             LegacyConfigurationError)
 import methodology
 from timeline_editor import (Transition, validate_transitions, resolve_schedule,
-                             proposals_from_thermal, snap_to_recorded_sample, timeline_stages)
+                             proposals_from_thermal, snap_to_recorded_sample,
+                             timeline_stages, operator_marker_stages)
 from session_store import save_session, restore_session
 from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
@@ -819,7 +820,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         row['k2_reviews'] = review_all_k2(a, row['effective_stages'], row['cooling_confirmed'])
         row['activity_assessments'] = assess_all(
             a, row['effective_stages'],
-            timeline_stages(row.get('timeline_events', []), duration) + row['stages'],
+            operator_marker_stages(row.get('timeline_events', []), duration) + row['stages'],
             row['constant_q'],
             row['constant_scope'], row['cooling_confirmed'])
         r = row['results']
