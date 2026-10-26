@@ -27,6 +27,9 @@ os.environ['PHP_ANALYZER_GUI'] = '1'
 import php_analyzer as engine
 from power_model import (PowerStage, calculate, validate, derive_estimated_periods,
                          effective_stages)
+from session_config import (export_configuration, validated_import,
+                            LegacyConfigurationError)
+import methodology
 
 
 def app_folder() -> Path:
@@ -132,6 +135,7 @@ class PHPDesktop(tk.Tk):
         for label, callback, sty in [
             ('+ Otwórz pliki CSV/ZIP', self.add_files, 'Accent.TButton'),
             ('Otwórz folder', self.add_folder, 'TButton'),
+            ('Wczytaj konfigurację JSON', self.load_configuration, 'TButton'),
             ('Analizuj wszystkie', self.analyze_all, 'TButton'),
             ('Eksport wybranego', self.export_selected, 'TButton'),
             ('Eksport całości', self.export_all, 'TButton')]:
@@ -155,12 +159,15 @@ class PHPDesktop(tk.Tk):
         self.chart_page = ttk.Frame(self.tabs)
         self.events_page = ttk.Frame(self.tabs)
         self.power_page = ttk.Frame(self.tabs)
+        self.help_page = ttk.Frame(self.tabs)
         self.tabs.add(self.chart_page, text='Wykresy')
         self.tabs.add(self.events_page, text='Epizody / ON? OFF?')
         self.tabs.add(self.power_page, text='Moc Q / R')
+        self.tabs.add(self.help_page, text='Metodyka i obliczenia')
         self._build_chart_page()
         self._build_events_page()
         self._build_power_page()
+        self._build_help_page()
         foot = ttk.Frame(self)
         foot.pack(fill='x', padx=20, pady=(0, 12))
         self.progress = ttk.Progressbar(foot, mode='determinate', length=150)
@@ -275,7 +282,7 @@ class PHPDesktop(tk.Tk):
         ttk.Button(buttons, text='+ Dodaj nadpisanie', command=self.add_stage).pack(side='left', padx=3)
         ttk.Button(buttons, text='Edytuj', command=self.edit_stage).pack(side='left', padx=3)
         ttk.Button(buttons, text='Usuń', command=self.delete_stage).pack(side='left', padx=3)
-        ttk.Label(body, text='Odniesienie R/Rref: wybierz przedział przy stałym Q [W]',
+        ttk.Label(body, text='Odniesienie R/Rref: jeden ciągły odcinek [Od, Do) z Q > 0, bez luk',
                   style='Sub.TLabel').pack(anchor='w', pady=(10, 4))
         ref_box = ttk.Frame(body)
         ref_box.pack(fill='x')
@@ -292,6 +299,59 @@ class PHPDesktop(tk.Tk):
         self.r_info = tk.StringVar(value='R niedostępny, dopóki nie przypiszesz Q.')
         ttk.Label(body, textvariable=self.r_info, style='Sub.TLabel',
                   wraplength=850).pack(anchor='w', pady=8)
+
+    def _build_help_page(self):
+        container = ttk.Frame(self.help_page)
+        container.pack(fill='both', expand=True, padx=15, pady=13)
+        ttk.Label(container, text='Metodyka analizy 3D PHP', style='Heading.TLabel').pack(anchor='w')
+        ttk.Label(container, text='Wzory, progi i ograniczenia zaimplementowane w programie.',
+                  style='Sub.TLabel').pack(anchor='w', pady=(4, 10))
+        text = tk.Text(container, wrap='word', bg='#ffffff', fg='#243a4c',
+                       font=('Segoe UI', 11), relief='flat', padx=22, pady=20,
+                       spacing1=4, spacing3=7)
+        sb = ttk.Scrollbar(container, orient='vertical', command=text.yview)
+        text.configure(yscrollcommand=sb.set)
+        text.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+        text.tag_configure('title', font=('Segoe UI', 13, 'bold'),
+                           foreground='#155c7c', spacing1=18, spacing3=9)
+        for title, body in methodology.sections():
+            text.insert('end', title + '\n', 'title')
+            text.insert('end', body + '\n\n')
+        text.configure(state='disabled')
+
+    def load_configuration(self):
+        """Restore operator's Q and reference with dataset identity validation."""
+        if self.active is None:
+            return messagebox.showinfo('Konfiguracja', 'Najpierw wczytaj pomiar CSV i wybierz go na liście.')
+        filename = filedialog.askopenfilename(title='Wczytaj konfiguracja.json',
+                    filetypes=[('Konfiguracja JSON', '*.json'), ('Wszystkie pliki', '*.*')])
+        if not filename:
+            return
+        row = self._get()
+        try:
+            with open(filename, 'r', encoding='utf-8-sig') as f:
+                config = json.load(f)
+            try:
+                restored = validated_import(config, row)
+            except LegacyConfigurationError as error:
+                if not messagebox.askyesno('Starsza konfiguracja bez sumy kontrolnej',
+                      str(error) + '\n\nCzy mimo to zaimportować konfigurację '
+                      'do tego pomiaru CSV?', icon='warning'):
+                    return
+                restored = validated_import(config, row, legacy_confirmed=True)
+            for key, value in restored.items():
+                row[key] = value
+            self.reference_enabled.set(row['ref_enabled'])
+            self.reference_from.set(f'{row["ref_start"]:g}')
+            self.reference_to.set(f'{row["ref_end"]:g}')
+            self._render_power_tree()
+            self._recalculate()
+            self.draw_plot()
+            self.status.set('Wczytano konfigurację: ' + filename)
+            messagebox.showinfo('Konfiguracja', 'Przywrócono Q, nadpisania i referencję R/Rref.')
+        except (ValueError, OSError) as error:
+            messagebox.showerror('Nie wczytano konfiguracji', str(error))
 
     def _set_busy(self, value):
         self.busy = value
@@ -427,7 +487,7 @@ class PHPDesktop(tk.Tk):
         entry.pack(side='left', padx=12)
         choice = tk.StringVar(value=row['constant_scope'])
         ttk.Radiobutton(root, variable=choice, value='estimated',
-                        text='Tylko oszacowane ON? (OFF? = 0 W; inne okresy: Q nieznane)'
+                        text='ON? = wpisana Q, OFF? = 0 W; P↑?, luki i inne: Q nieznane'
                         ).pack(anchor='w', pady=3)
         ttk.Radiobutton(root, variable=choice, value='full',
                         text='Cały plik (tylko jeśli fizycznie Q było stałe przez cały pomiar)'
@@ -474,7 +534,8 @@ class PHPDesktop(tk.Tk):
             return messagebox.showinfo('Nadpisywanie Q', 'Wybierz wykryty okres ON?/OFF? w tabeli.')
         row = self._get()
         period = row['periods'][int(selected[0])]
-        suggested = (row['constant_q'] or 0.) if period.state in ('ON?', 'P_UP?') else 0.
+        suggested = (row['constant_q'] if period.state == 'ON?' else
+                     0. if period.state == 'OFF?' else None)
         st = self._stage_dialog(PowerStage(period.start_min, period.end_min, suggested))
         if st:
             self._add_override(st)
@@ -498,7 +559,7 @@ class PHPDesktop(tk.Tk):
                 power = '— (nieznane)'
             elif row['constant_scope'] == 'full':
                 power = f'{q:g} (cały plik)'
-            elif p.state in ('ON?', 'P_UP?'):
+            elif p.state == 'ON?':
                 power = f'{q:g} (założone)'
             elif p.state == 'OFF?':
                 power = '0 (założone)'
@@ -507,7 +568,7 @@ class PHPDesktop(tk.Tk):
             manual = any(s.start_min < p.end_min and s.end_min > p.start_min for s in row['stages'])
             note = p.note + (' · ręcznie nadpisane' if manual else '')
             if p.state == 'P_UP?':
-                note = 'Możliwa zmiana Q! ' + note
+                note = 'Możliwa zmiana Q — wymaga ręcznego Q! ' + note
             self.period_tree.insert('', 'end', iid=str(i), values=(p.state,
                 f'{p.start_min:.3f}', f'{p.end_min:.3f}', power, note))
         self.power_tree.delete(*self.power_tree.get_children())
@@ -529,7 +590,8 @@ class PHPDesktop(tk.Tk):
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
-        vars_ = [tk.StringVar(value=str(v)) for v in (data.start_min, data.end_min, data.q_w)]
+        vars_ = [tk.StringVar(value='' if v is None else str(v))
+                 for v in (data.start_min, data.end_min, data.q_w)]
         for i, lab in enumerate(('Od [min]', 'Do [min]', 'Q [W]')):
             ttk.Label(dialog, text=lab).grid(row=i, column=0, padx=15, pady=9, sticky='w')
             ttk.Entry(dialog, textvariable=vars_[i], width=24).grid(row=i, column=1, padx=15, pady=9)
@@ -748,18 +810,7 @@ class PHPDesktop(tk.Tk):
                      [[p.start_min, p.end_min, p.state, p.note] for p in row['periods']])
         self._writer(out/'nadpisania_Q.csv', ['od_min', 'do_min', 'Q_W'],
                      [[s.start_min, s.end_min, s.q_w] for s in row['stages']])
-        config = {'filename': a.record.name, 'source': a.record.origin,
-                  'manual_overrides': [asdict(s) for s in row['stages']],
-                  'estimated_periods': [asdict(p) for p in row['periods']],
-                  'constant_q_W': row['constant_q'],
-                  'constant_q_scope': row['constant_scope'],
-                  'resolved_stages': [asdict(s) for s in row['effective_stages']],
-                  'reference_enabled': row['ref_enabled'],
-                  'reference_start_min': row['ref_start'], 'reference_end_min': row['ref_end'],
-                  'r_ref_K_W': r['r_ref'], 'reference_power_W': r['q_ref'],
-                  'notes': ('Q values are supplied by the operator, not inferred from temperatures. '
-                            'ON?/OFF? times are thermal estimates, not confirmed electrical events. '
-                            'Manual overrides take precedence. R_app is apparent.') }
+        config = export_configuration(row)
         (out/'konfiguracja.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def _export_one(self, row, folder):
