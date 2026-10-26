@@ -4,12 +4,15 @@ Verifies that the real Tkinter UI can create and edit timeline markers,
 update Q/R, redraw all three plots, and expose the saved event table.
 """
 import unittest
+import os
 from types import SimpleNamespace
 
 import php_desktop as desktop
 from power_model import derive_estimated_periods
 
 
+@unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt',
+                     'Tkinter requires a desktop display or xvfb-run')
 class DesktopTimelineSmokeTests(unittest.TestCase):
     def setUp(self):
         self.app=desktop.PHPDesktop()
