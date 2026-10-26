@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from timeline_editor import (Transition, validate_transitions, timeline_stages,
                              overlay_stages, resolve_schedule, proposals_from_thermal,
-                             snap_to_recorded_sample)
+                             snap_to_recorded_sample, last_heating_boundary)
 from power_model import PowerStage, EstimatedPeriod, calculate
 from session_config import export_configuration, validated_import
 from session_store import save_session, restore_session, session_path
@@ -38,6 +38,28 @@ class TimelineTests(unittest.TestCase):
         calculated=calculate([0,360,450,930],[40]*4,st)
         self.assertEqual(calculated['q'],[None,10,25,0])
         self.assertEqual(calculated['r'],[None,4,1.6,None])
+
+    def test_end_is_boundary_but_not_automatic_off(self):
+        markers=[Transition(3,'ON',12)]
+        self.assertEqual(timeline_stages(markers,20),[PowerStage(3,20,12)])
+        self.assertEqual(last_heating_boundary(markers,20),
+                         (20,'KONIEC CSV — OFF niepotwierdzone',False))
+
+    def test_explicit_terminal_off_has_no_zero_length_q_segment(self):
+        markers=[Transition(3,'ON',12),Transition(20,'OFF',0)]
+        self.assertEqual(validate_transitions(markers,20),markers)
+        self.assertEqual(timeline_stages(markers,20),[PowerStage(3,20,12)])
+        self.assertEqual(last_heating_boundary(markers,20),
+                         (20,'OFF (wpis operatora)',True))
+        self.assertEqual(resolve_schedule(self.periods,None,[],20,
+                         transitions=markers),[PowerStage(3,20,12)])
+
+    def test_only_terminal_off_can_be_at_exact_last_timestamp(self):
+        for kind,q in [('ON',10),('CHANGE_Q',5)]:
+            with self.assertRaises(ValueError):
+                validate_transitions([Transition(20,kind,q)],20)
+        with self.assertRaises(ValueError):
+            validate_transitions([Transition(20.01,'OFF',0)],20)
 
     def test_unknown_q_stays_unknown(self):
         self.assertEqual(resolve_schedule(self.periods,None,[],20),[])
