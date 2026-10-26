@@ -13,6 +13,9 @@ def sections():
          'Te=(T_ch1+T_ch3)/2 [°C]; Tm=(T_ch4+T_ch5)/2 [°C]; '
          'Tc=(T_ch6+T_ch7)/2 [°C]. Czas [min] jest liczony od pierwszej '
          'próbki CSV. Nieznane i błędne próbki nie są interpolowane. '
+         'Jeśli zegar dobowy cofa się z okolic 23:59 na 00:00, '
+         'program dodaje 24 h, zachowując kolejność próbek; inne cofnięcia '
+         'czasu nie są domyślnie interpretowane jako nowa doba. '
          'Brak rejestracji jest rozpoznawany, gdy odstęp czasowy > '
          'max(10 s; 5×mediana odstępów). Wykresy są wówczas rozcinane.'),
         ('ΔT i wygładzanie',
@@ -37,7 +40,22 @@ def sections():
          f'K2: wygładzone ΔT ≤(1−{engine.DELTA_IMPROVEMENT:g})×baza '
          f'przez łącznie ≥{engine.MIN_IMPROVEMENT_S/60:g} min. '
          'Mniejsze ΔT może świadczyć o korzystnej zmianie, lecz przy zmianie Q '
-         'albo chłodzenia nie dowodzi poprawy transportu ciepła przez PHP.'),
+         'albo chłodzenia nie dowodzi poprawy transportu ciepła przez PHP. '
+         'Jest to wyłącznie TERMICZNY KANDYDAT K2, oznaczany bez znajomości Q.'),
+        ('Kwalifikacja K2 po ustaleniu Q i chłodzenia',
+         'Po przypisaniu mocy operatora badany jest cały przedział od początku '
+         f'okna referencyjnego ({engine.PRE_BASELINE_START_S/60:g} min przed O1/O2) '
+         'do końca epizodu. Wymagamy nieprzerwanej rejestracji oraz dodatniej, '
+         'znanej i niezmiennej Q bez OFF ani luk w harmonogramie. '
+         'Przy braku Q lub jej zmianie K2 pozostaje NIEZWERYFIKOWANY. '
+         'Jeśli Q jest stała, ale warunki chłodzenia nie zostały potwierdzone '
+         'w dzienniku eksperymentu, status to K2 termiczne; chłodzenie?. '
+         'Dopiero zaznaczenie deklaracji operatora o porównywalnych warunkach '
+         'chłodzenia pozwala oznaczyć K2 jako WARUNKOWO PORÓWNYWALNE. '
+         'Deklaracja nie jest niezależnym pomiarem warunków chłodzenia, '
+         'a nawet takie K2 nie stanowi dowodu ruchu czynnika ani wzrostu '
+         'sprawności PHP. Zielony kolor wykresu dotyczy wyłącznie tego '
+         'warunkowego statusu; pozostałe epizody są pomarańczowe.'),
         ('Szacowanie ON?, OFF? i P↑?',
          f'Analizowane są spójne trendy Te i Tc w oknie około '
          f'{engine.HEAT_CHANGE_WINDOW_S} s; mocniejszy wzrost sugeruje ON?, '
@@ -48,7 +66,9 @@ def sections():
          'Moc pochodzi wyłącznie z deklaracji operatora. W trybie szacowanym '
          'ON? otrzymuje zadane Q, OFF? jest założone jako 0 W, a '
          'UNKNOWN/GAP/P↑? pozostają bez Q. Podejrzewany wzrost P↑? wymaga '
-         'ręcznego nadpisania, jeśli znasz nowe Q. Opcja „cały plik” '
+         'ręcznego nadpisania, jeśli znasz nowe Q. Tabela ON?/OFF? pokazuje '
+         'końcową Q po nadpisaniach, w tym informację o różnych lub nieznanych '
+         'wartościach w obrębie jednego okresu. Opcja „cały plik” '
          'przypisuje stałą Q również poza ON? i jest poprawna tylko jeśli '
          'tak faktycznie pracowała grzałka. Ręczne etapy są nadrzędne.'),
         ('Pozorny opór cieplny R_app',
@@ -76,7 +96,11 @@ def sections():
          'Dolny panel eksportowanego PNG odpowiada wybranej metryce '
          '(R_app, R/R_ref, Q, proxy albo RMS). Raport HTML zawiera metodykę '
          'na końcu, a Metodyka_obliczen.html jest samodzielną stroną. '
-         'Zapis konfiguracja.json zawiera ustawienia mocy oraz SHA-256 '
+         'Dodatkowo eksportowane są ocena_K2.csv i Q_w_okresach_ON_OFF.csv. '
+         'wszystkie_epizody.csv zawiera wyłącznie oscylacje, natomiast '
+         'wszystkie_zdarzenia_termiczne.csv także przejścia T1/T2. '
+         'Zapis konfiguracja.json zawiera ustawienia mocy, deklarację '
+         'porównywalnych warunków chłodzenia oraz SHA-256 '
          'wszystkich czasów i odczytów. Stare konfiguracje bez SHA-256 '
          'wymagają potwierdzenia zgodności z CSV.'),
         ('Ograniczenia i niepewności',
