@@ -90,3 +90,21 @@ Okno referencyjne musi obejmować wyłącznie jeden ciągły okres dodatniej, st
 - Ostatnia zakładka \`Metodyka i obliczenia\` i końcowa część \`Raport.html\` opisują wzory, progi K1/K2, detekcję ON?/OFF?, sposób liczenia Q i oporu, normalizację, proxy oraz niepewności. Dostępny jest też plik \`Metodyka_obliczen.html\`.
 
 Parametry detekcji mają charakter roboczy i wymagają walidacji naukowej. R_app=ΔT/Q [K/W] to wskaźnik pozorny względem mocy elektrycznej, nie bezpośredni pomiar mocy transportowanej przez PHP.
+
+## K2 po walidacji mocy i warunków chłodzenia
+
+K2 w silniku termicznym oznacza **kandydata**: spadek wygładzonej różnicy temperatur o co najmniej 15% względem lokalnej bazy, utrzymujący się przez minimum 5 min przy epizodzie K1. Nie jest to automatyczny dowód poprawy transportu ciepła.
+
+Aplikacja desktopowa **po przypisaniu Q** nadaje osobny status:
+- **K2 niezweryfikowane: Q** — moc jest nieznana, zerowa lub zmieniała się od początku okna porównania do końca epizodu.
+- **K2 niezweryfikowane: luka** — w okresie porównania występuje przerwa rejestracji.
+- **K2 termiczne; chłodzenie?** — Q jest znana, dodatnia i stała, ale nie potwierdzono porównywalnych warunków chłodzenia.
+- **K2 warunkowo porównywalne** — dodatkowo operator świadomie zaznaczył deklarację podobnych warunków chłodzenia na podstawie dziennika eksperymentu.
+
+**Zielone tło** oznacza tylko ostatni, warunkowy status; pozostałe epizody są pomarańczowe. Deklaracja chłodzenia jest założeniem, nie pomiarem temperatury otoczenia. Nawet zielony status nie potwierdza ruchu czynnika.
+
+Tabela ON?/OFF? pokazuje teraz **Q wynikową po ręcznych nadpisaniach**; okres o różnych mocach wyświetla „Q zmienna”, a nie błędnie stałą Q. Konfiguracja JSON zachowuje również zaznaczenie deklaracji chłodzenia.
+
+Eksport uwzględnia **ocena_K2.csv**, **Q_w_okresach_ON_OFF.csv** i status kwalifikacji w zbiorczych tabelach zdarzeń. **wszystkie_epizody.csv** zawiera tylko O1/O2, natomiast **wszystkie_zdarzenia_termiczne.csv** również przejścia T1/T2. Opis kryteriów, ograniczeń i obliczeń pozostaje w ostatniej zakładce oraz na końcu **Raport.html**.
+
+Parser CSV rozpoznaje przejścia zegara dobowego z 20:00–24:00 na 00:00–04:00 bez błędnego sortowania próbek przez północ. Nie interpretuje arbitralnych cofnięć zegara jako zmiany daty; gdy zapis czasu jest niejednoznaczny, zalecany jest eksport z pełną datą.
