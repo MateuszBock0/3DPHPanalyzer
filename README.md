@@ -79,3 +79,14 @@ MIT.
 
 ## Nowa kontrola R_ref
 Okno referencyjne musi obejmować wyłącznie jeden ciągły okres dodatniej, stałej mocy Q, bez OFF i braków rejestracji.
+
+
+## Weryfikacja referencji, eksport i metodyka
+
+- Przedział referencyjny \`R/Rref\` jest półotwarty \`[Od, Do)\` i musi całkowicie mieścić się w jednym nieprzerwanym etapie znanej, stałej, dodatniej Q. Nie może zawierać OFF, nieznanej Q ani luki rejestracji; wymagane jest co najmniej 5 próbek. Wybierz okres quasi-ustalony.
+- Oszacowany \`P↑?\` nie dziedziczy automatycznie Q w trybie przedziałów ON?/OFF?. Jeśli rzeczywiście zmieniła się moc, wprowadź ręczne Q. W trybie „cały plik” program stosuje zadane przez operatora Q przez cały czas.
+- Dolny panel zapisany do PNG w eksporcie zbiorczym odpowiada metryce wybranej w interfejsie (R_app, R/Rref, proxy, RMS lub Q). Raport HTML nazywa panel, zawiera działające linki do CSV i końcową sekcję metodyki.
+- \`Wczytaj konfigurację JSON\` przywraca Q i referencję do aktualnie wybranego CSV. Nowa konfiguracja zapisuje SHA-256 wszystkich próbek oraz czasów, co blokuje import ustawień do innego pomiaru. Stary JSON bez tej sumy wymaga potwierdzenia.
+- Ostatnia zakładka \`Metodyka i obliczenia\` i końcowa część \`Raport.html\` opisują wzory, progi K1/K2, detekcję ON?/OFF?, sposób liczenia Q i oporu, normalizację, proxy oraz niepewności. Dostępny jest też plik \`Metodyka_obliczen.html\`.
+
+Parametry detekcji mają charakter roboczy i wymagają walidacji naukowej. R_app=ΔT/Q [K/W] to wskaźnik pozorny względem mocy elektrycznej, nie bezpośredni pomiar mocy transportowanej przez PHP.
