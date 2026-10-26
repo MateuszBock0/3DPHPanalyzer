@@ -30,6 +30,113 @@ def validate(stages: list[PowerStage]) -> list[PowerStage]:
     return ordered
 
 
+@dataclass(frozen=True)
+class EstimatedPeriod:
+    """Thermal-response state only, NEVER electrically verified heater state."""
+    start_min: float
+    end_min: float
+    state: str  # UNKNOWN / ON? / OFF? / P_UP? / GAP
+    note: str = ''
+
+
+def derive_estimated_periods(t_seconds, heating_events, gaps=()):
+    """Partition the recording using inferred thermal changes and missing-data gaps.
+
+    The result is a DRAFT for the operator. P_UP? is not a known power level.
+    A gap terminates any inferred state: we cannot infer what happened while
+    the data logger was offline. All times are minutes since first CSV sample.
+    """
+    if len(t_seconds) < 2:
+        return []
+    t0 = float(t_seconds[0])
+    duration = (float(t_seconds[-1]) - t0) / 60
+    if duration <= 0:
+        return []
+    changes = []
+    known = {'HEATING_ON_EST': 'ON?', 'HEATING_OFF_EST': 'OFF?',
+             'HEATING_INCREASE_EST': 'P_UP?'}
+    for event in heating_events:
+        state = known.get(event.kind)
+        when = (float(event.time) - t0) / 60
+        if state and 0 <= when <= duration:
+            changes.append((when, 2, state))
+    for start, end in gaps:
+        a = max(0., (float(start) - t0) / 60)
+        b = min(duration, (float(end) - t0) / 60)
+        if b > a:
+            changes.extend(((a, 0, 'GAP'), (b, 1, 'UNKNOWN')))
+    # Events at a gap boundary are processed last; a subsequent ON? can
+    # reinstate an inferred state, but gaps themselves never imply OFF?.
+    changes.sort(key=lambda item: (item[0], item[1]))
+    result = []
+    last = 0.
+    state = 'UNKNOWN'
+    for current, _priority, next_state in changes:
+        current = min(duration, max(0., current))
+        if current - last > 1e-8:
+            result.append(EstimatedPeriod(last, current, state,
+                                         'Szacowany stan z temperatur' if state not in ('UNKNOWN', 'GAP')
+                                         else 'Stan nieustalony / brak pomiaru'))
+        state, last = next_state, current
+    if duration - last > 1e-8:
+        result.append(EstimatedPeriod(last, duration, state,
+                                     'Koniec rejestracji, brak potwierdzenia elektrycznego'
+                                     if state in ('ON?', 'P_UP?') else 'Szacowany stan z temperatur'))
+    return result
+
+
+def effective_stages(periods: list[EstimatedPeriod], constant_q: Optional[float],
+                     overrides: list[PowerStage], duration: float,
+                     scope: str = 'estimated') -> list[PowerStage]:
+    """Resolve Q with priority manual override > optional constant-Q base.
+
+    No constant Q -> no automatic assignment even for estimated OFF?.
+    Scope 'estimated': ON? / P_UP? get Q, OFF? gets 0 W, unknown/gap NULL.
+    Scope 'full': user expressly assigns Q to the entire recorded time.
+    Neither scope changes the origin or uncertainty of estimated periods.
+    """
+    ordered = validate(overrides)
+    if not math.isfinite(duration) or duration < 0:
+        raise ValueError('Nieprawidłowy czas trwania pomiaru.')
+    if scope not in ('estimated', 'full'):
+        raise ValueError('Nieznany tryb stałej mocy Q.')
+    if constant_q is not None and (not math.isfinite(constant_q) or constant_q < 0):
+        raise ValueError('Stała moc Q musi być nieujemną liczbą w watach.')
+    base = []
+    if constant_q is not None:
+        if scope == 'full':
+            base = [PowerStage(0., duration, constant_q)] if duration else []
+        else:
+            for p in periods:
+                power = (constant_q if p.state in ('ON?', 'P_UP?') else
+                         0. if p.state == 'OFF?' else None)
+                if power is not None and p.end_min > p.start_min:
+                    base.append(PowerStage(p.start_min, p.end_min, power))
+    # Split on all relevant boundaries; every subinterval has one source.
+    boundaries = {0., duration}
+    for stage in base + ordered:
+        boundaries.add(max(0., min(duration, stage.start_min)))
+        boundaries.add(max(0., min(duration, stage.end_min)))
+    edges = sorted(boundaries)
+    result = []
+    for a, b in zip(edges, edges[1:]):
+        if b - a < 1e-8:
+            continue
+        x = (a + b) / 2
+        manual = next((s for s in ordered if s.start_min <= x < s.end_min), None)
+        auto = next((s for s in base if s.start_min <= x < s.end_min), None)
+        chosen = manual if manual is not None else auto
+        if chosen is None:
+            continue
+        power = chosen.q_w
+        if result and abs(result[-1].end_min - a) < 1e-8 and result[-1].q_w == power:
+            prev = result.pop()
+            result.append(PowerStage(prev.start_min, b, power))
+        else:
+            result.append(PowerStage(a, b, power))
+    return result
+
+
 def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optional[tuple[float, float]] = None):
     """Return sampled Q, R_app [K/W], R/R_ref, and reference details.
 
