@@ -4,7 +4,7 @@ Aplikacja desktopowa dla Windows, działająca podobnie do [LiftHeightAnalyzer](
 
 ## Pobierz wersję dla Windows — bez instalowania Pythona
 
-**[Releases → pobierz 3DPHPAnalyzer_Windows_x64.zip](https://github.com/MateuszBock0/3DPHPanalyzer/releases/tag/latest)**
+**[Releases → pobierz 3DPHPAnalyzer_Windows_x64.zip](https://github.com/MateuszBock0/3DPHPanalyzer/releases/latest)**
 
 1. Rozpakuj pobrany plik ZIP.
 2. Nie przenoś samego `.exe` poza katalog — folder `_internal` musi zostać obok.
@@ -12,7 +12,7 @@ Aplikacja desktopowa dla Windows, działająca podobnie do [LiftHeightAnalyzer](
 4. Wybierz CSV / archiwum ZIP zawierające CSV lub folder pomiarów.
 5. Zobacz wykresy, detekcję epizodów, wprowadź ręcznie Q [W], pobierz wyniki.
 
-**Uwaga:** GitHub → „Code → Download ZIP” daje *kod źródłowy*, nie gotowe `.exe`. Gotową aplikację pobiera się z **Releases**. Po każdym pushu do `main`, GitHub Actions buduje nowy pakiet dla Windows i aktualizuje wersję `latest`. Żaden Python nie jest wymagany do użycia gotowego ZIP. Aplikacja działa offline.
+**Uwaga:** GitHub → „Code → Download ZIP” daje *kod źródłowy*, nie gotowe `.exe`. Gotową aplikację pobiera się z **Releases**. Po każdym pushu do `main`, GitHub Actions buduje nowy pakiet dla Windows i publikuje nową wersję oznaczoną jako „Latest”. Żaden Python nie jest wymagany do użycia gotowego ZIP. Aplikacja działa offline.
 
 ## Co jest w środku
 
