@@ -10,7 +10,9 @@ import math
 from tkinter import messagebox, simpledialog
 import tkinter as tk
 
-from timeline_editor import (Transition, validate_transitions,
+from timeline_editor import (Transition, validate_transitions, ThermalSuggestion,
+                             validate_suggestions, initial_suggestions,
+                             suggested_heating_events,
                              proposals_from_thermal, snap_to_recorded_sample)
 from session_store import save_session
 
@@ -40,12 +42,16 @@ class TimelineInteractionMixin:
             return
         self.chart_edit_mode = mode
         labels = {
+            'SUGGEST_ON':'Kliknij na wykresie, aby dodać sugestię ON? (bez przypisywania mocy Q).',
+            'SUGGEST_OFF':'Kliknij na wykresie, aby dodać sugestię OFF? (bez przypisywania mocy Q).',
             'ON':'Najpierw wpisz Q = [   ] W, następnie kliknij na wykresie chwilę ON.',
             'OFF':'Kliknij na wykresie chwilę OFF; od tego momentu program przyjmie 0 W.',
             'CHANGE_Q':'Najpierw wpisz nową Q = [   ] W, następnie kliknij zmianę mocy na wykresie.'
         }
         if isinstance(mode,tuple) and mode[0]=='MOVE':
             text='Kliknij nowe miejsce dla wybranego znacznika ON/OFF/Q.'
+        elif isinstance(mode,tuple) and mode[0]=='MOVE_SUGGESTION':
+            text='Kliknij nowe miejsce sugestii ON?/OFF? (bez uznawania przełączenia za potwierdzone).'
         else:
             text=labels.get(mode,'Tryb edycji wyłączony. Możesz przeciągnąć ręczny znacznik na wykresie.')
         self.editor_hint.set(text)
@@ -59,26 +65,93 @@ class TimelineInteractionMixin:
         except OSError as exc:
             self.status.set('Uwaga: nie zapisano automatycznej sesji: '+str(exc))
 
+    def _snapshot_timeline(self):
+        row=self._get()
+        return (list(row.get('timeline_events', [])),
+                list(row.get('thermal_suggestions', [])))
+
     def _timeline_changed(self, previous):
         row=self._get()
-        row.setdefault('undo_events', []).append(list(previous))
-        row['undo_events'] = row['undo_events'][-20:]
+        row.setdefault('undo_history', []).append(previous)
+        row['undo_history'] = row['undo_history'][-30:]
         self._recalculate(notify=True)
         self._render_power_tree()
         self._render_events()
         self._render_diagnosis()
         self.draw_plot()
         self._autosave_current()
-        self.status.set('Zmieniono oś czasu; przeliczono Q, R_app, R/Rref, K2 i ocenę aktywności.')
+        self.status.set('Oś czasu poprawiona; zapisano edycję i przeliczono Q, R i diagnozę PHP.')
 
     def _apply_timeline(self, proposed):
         row=self._get()
         checked=validate_transitions(proposed,self._duration_min()) if proposed else []
-        previous=list(row.get('timeline_events', []))
-        if checked == previous:
+        if checked == row.get('timeline_events', []):
             return
+        previous=self._snapshot_timeline()
         row['timeline_events']=checked
         self._timeline_changed(previous)
+
+    def _apply_suggestions(self, proposed):
+        row=self._get()
+        checked=validate_suggestions(proposed,self._duration_min()) if proposed else []
+        if checked == row.get('thermal_suggestions', []):
+            return
+        previous=self._snapshot_timeline()
+        row['thermal_suggestions']=checked
+        self._timeline_changed(previous)
+
+    def _add_suggestion(self,kind,minute):
+        row=self._get()
+        entries=list(row.get('thermal_suggestions', []))
+        entries.append(ThermalSuggestion(minute, kind, 'operator_added'))
+        self._apply_suggestions(entries)
+
+    def _move_suggestion(self,index,minute):
+        row=self._get()
+        entries=list(row.get('thermal_suggestions', []))
+        if index<0 or index>=len(entries):
+            raise ValueError('Nie znaleziono sugestii termicznej.')
+        item=entries[index]
+        entries[index]=replace(item,time_min=minute,source='operator_adjusted')
+        self._apply_suggestions(entries)
+
+    def _delete_suggestion(self,index):
+        entries=list(self._get().get('thermal_suggestions', []))
+        if not 0<=index<len(entries):
+            raise ValueError('Nie znaleziono sugestii do usunięcia.')
+        entries.pop(index)
+        self._apply_suggestions(entries)
+
+    def move_selected_suggestion(self):
+        if self.active is None: return
+        selection=self.suggestion_tree.selection()
+        if not selection:
+            messagebox.showinfo('Sugestie ON?/OFF?','Wybierz wiersz z tabeli.',parent=self)
+            return
+        self.tabs.select(self.chart_page)
+        self._set_chart_mode(('MOVE_SUGGESTION',int(selection[0])))
+
+    def delete_selected_suggestion(self):
+        if self.active is None: return
+        selection=self.suggestion_tree.selection()
+        if not selection:
+            messagebox.showinfo('Sugestie ON?/OFF?','Wybierz wiersz z tabeli.',parent=self)
+            return
+        self._delete_suggestion(int(selection[0]))
+
+    def reset_thermal_suggestions(self):
+        if self.active is None: return
+        row=self._get()
+        self._apply_suggestions(initial_suggestions(
+            row['analysis'].heating_events, row['record'].t[0], self._duration_min()))
+
+    def _nearest_suggestion(self,event,threshold_px=12.):
+        items=self._get().get('thermal_suggestions', [])
+        candidates=[(abs(event.x-event.inaxes.transData.transform((item.time_min,0))[0]),i)
+                    for i,item in enumerate(items)]
+        if not candidates: return None
+        distance,index=min(candidates)
+        return index if distance<threshold_px else None
 
     def _q_for_on(self, kind):
         """Q must be explicitly typed by the operator in the inline field."""
@@ -139,6 +212,15 @@ class TimelineInteractionMixin:
         menu.add_command(label='OFF tutaj (0 W)',command=lambda:self._add_marker('OFF',minute))
         menu.add_command(label='Zmiana Q tutaj (Q z pola)',command=lambda:self._add_marker('CHANGE_Q',minute))
         menu.add_separator()
+        menu.add_command(label='Dodaj sugestię ON? tutaj (bez Q)',
+                         command=lambda:self._add_suggestion('HEATING_ON_EST',minute))
+        menu.add_command(label='Dodaj sugestię OFF? tutaj (bez Q)',
+                         command=lambda:self._add_suggestion('HEATING_OFF_EST',minute))
+        nearest=self._nearest_suggestion(event)
+        if nearest is not None:
+            menu.add_command(label='Usuń pobliską sugestię ON?/OFF?',
+                             command=lambda i=nearest:self._delete_suggestion(i))
+        menu.add_separator()
         menu.add_command(label='OFF na końcu CSV (potwierdź)',command=self.add_off_at_end)
         try:
             menu.tk_popup(self.winfo_pointerx(),self.winfo_pointery())
@@ -163,6 +245,15 @@ class TimelineInteractionMixin:
                 self._move_transition(mode[1],minute)
                 self._set_chart_mode(None)
                 return
+            if isinstance(mode,tuple) and mode[0]=='MOVE_SUGGESTION':
+                self._move_suggestion(mode[1],minute)
+                self._set_chart_mode(None)
+                return
+            if mode in ('SUGGEST_ON','SUGGEST_OFF'):
+                self._add_suggestion('HEATING_ON_EST' if mode=='SUGGEST_ON'
+                                     else 'HEATING_OFF_EST',minute)
+                self._set_chart_mode(None)
+                return
             if mode in ('ON','OFF','CHANGE_Q'):
                 if self._add_marker(mode,minute):
                     self._set_chart_mode(None)
@@ -178,29 +269,42 @@ class TimelineInteractionMixin:
             if near is not None:
                 self._drag_index=near
                 self._drag_lines=self._manual_line_artists.get(near,[])
-                self.editor_hint.set('Przesuń pionowy znacznik i puść przycisk myszy.')
+                self.editor_hint.set('Przesuń ręczny znacznik ON/OFF/Q i puść przycisk myszy.')
+            else:
+                estimated=self._nearest_suggestion(event)
+                if estimated is not None:
+                    self._drag_suggestion_index=estimated
+                    self._drag_lines=self._suggestion_line_artists.get(estimated,[])
+                    self.editor_hint.set('Przesuń granicę ON?/OFF? i puść przycisk. '
+                        'To nadal sugestia cieplna; nie potwierdza zasilania.')
         except ValueError as exc:
             messagebox.showwarning('Nie można umieścić znacznika',str(exc),parent=self)
 
     def _on_chart_motion(self,event):
-        if self._drag_index is None or event.xdata is None or event.inaxes not in self.axes:
+        if (self._drag_index is None and self._drag_suggestion_index is None
+                or event.xdata is None or event.inaxes not in self.axes):
             return
         for line in self._drag_lines:
             line.set_xdata([event.xdata,event.xdata])
         self.canvas.draw_idle()
 
     def _on_chart_release(self,event):
-        if self._drag_index is None:
+        if self._drag_index is None and self._drag_suggestion_index is None:
             return
         index=self._drag_index
+        suggestion_index=self._drag_suggestion_index
         self._drag_index=None
+        self._drag_suggestion_index=None
         self._drag_lines=[]
         if event.inaxes not in self.axes or event.xdata is None:
             self.draw_plot()
             return
         try:
             minute=snap_to_recorded_sample(event.xdata,self._get()['record'].t)
-            self._move_transition(index,minute)
+            if suggestion_index is not None:
+                self._move_suggestion(suggestion_index,minute)
+            else:
+                self._move_transition(index,minute)
         except ValueError as exc:
             self.draw_plot()
             messagebox.showwarning('Nie można przesunąć znacznika',str(exc),parent=self)
@@ -260,29 +364,29 @@ class TimelineInteractionMixin:
         self._apply_timeline(events)
 
     def undo_timeline(self):
-        if self.active is None:
-            return
+        if self.active is None: return
         row=self._get()
-        history=row.get('undo_events',[])
+        history=row.get('undo_history', [])
         if not history:
-            self.status.set('Brak wcześniejszych zmian znaczników do cofnięcia.')
+            self.status.set('Brak zmian ON/OFF/Q do cofnięcia.')
             return
-        before=list(row['timeline_events'])
-        row['timeline_events']=history.pop()
+        prev_markers,prev_estimates=history.pop()
+        row['timeline_events']=prev_markers
+        row['thermal_suggestions']=prev_estimates
         self._recalculate()
         self._render_power_tree()
         self._render_events()
         self._render_diagnosis()
         self.draw_plot()
         self._autosave_current()
-        self.status.set('Cofnięto zmianę znaczników ON/OFF/Q.')
+        self.status.set('Cofnięto ostatnią edycję osi czasu ON/OFF/Q.')
 
     def accept_thermal_proposals(self):
         if self.active is None:
             messagebox.showinfo('Sugestie','Najpierw wczytaj CSV.')
             return
         row=self._get()
-        count=sum(e.kind in ('HEATING_ON_EST','HEATING_OFF_EST') for e in row['analysis'].heating_events)
+        count=sum(e.kind in ('HEATING_ON_EST','HEATING_OFF_EST') for e in row['thermal_suggestions'])
         if not count:
             messagebox.showinfo('Sugestie','Brak sugestii ON?/OFF? dla tego pomiaru.')
             return
@@ -294,13 +398,13 @@ class TimelineInteractionMixin:
              'Ręczne przedziały Q pozostaną bez zmian.',icon='warning',parent=self):
             return
         q=row.get('constant_q')
-        if any(e.kind=='HEATING_ON_EST' for e in row['analysis'].heating_events) and (q is None or q<=0):
+        if any(e.kind=='HEATING_ON_EST' for e in row['thermal_suggestions']) and (q is None or q<=0):
             q=self._q_for_on('sugestii ON?')
             if q is None:
                 return
         try:
             result=proposals_from_thermal(
-                row['analysis'].heating_events,row['record'].t[0],
+                suggested_heating_events(row['thermal_suggestions'],row['record'].t[0]),row['record'].t[0],
                 self._duration_min(),q)
             self._apply_timeline(result)
             self.status.set(f'Zatwierdzono {len(result)} sugestii termicznych. Możesz teraz przesuwać znaczniki.')
