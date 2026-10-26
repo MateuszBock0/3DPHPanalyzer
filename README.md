@@ -10,7 +10,7 @@ Aplikacja desktopowa dla Windows, działająca podobnie do [LiftHeightAnalyzer](
 2. Nie przenoś samego `.exe` poza katalog — folder `_internal` musi zostać obok.
 3. Dwukrotnie kliknij `3DPHPAnalyzer.exe`.
 4. Wybierz CSV / archiwum ZIP zawierające CSV lub folder pomiarów.
-5. Przy pierwszym wykresie możesz wybrać „Ustaw stałe Q…”.
+5. W polu **Q = [   ] W** wpisz nastawę grzałki (lub pozostaw puste, jeśli jej nie znasz). Okno „Ustaw stałe Q…” jest opcjonalne.
 6. Sprawdź wykryte okresy ON?/OFF? oraz popraw przedziały Q ręcznie.
 7. Zobacz wykresy i pobierz wyniki.
 
@@ -31,7 +31,7 @@ Przypisanie kanałów wynikające z eksperymentu:
 - ch4/ch5: sekcja środkowa Tm;
 - ch6/ch7: skraplacz Tc.
 
-**Konfiguracja stałej Q na pierwszym wykresie:** po wczytaniu pierwszego pomiaru pokazuje się okno z możliwością wpisania mocy w watach. Można wybrać zastosowanie Q tylko do szacowanych okresów `ON?` (wtedy `OFF?` otrzymuje założone `0 W`, a przed rozpoznaniem `ON?` i w lukach Q pozostaje nieznane) albo do **całego pliku** — ta druga opcja jest poprawna tylko przy fizycznie stałej mocy przez cały pomiar. Podczas otwierania kolejnych pomiarów można wywołać okno przyciskiem `Ustaw stałe Q…`.
+**Opcjonalna konfiguracja stałej Q:** przycisk „Ustaw stałe Q…” pozwala przypisać wartość do całego pliku albo szacowanych ON?/OFF?. Nie ma już automatycznego okna blokującego pierwszy wykres; zwykłe ON/zmiana mocy używa pola Q = [   ] W. Można wybrać zastosowanie Q tylko do szacowanych okresów `ON?` (wtedy `OFF?` otrzymuje założone `0 W`, a przed rozpoznaniem `ON?` i w lukach Q pozostaje nieznane) albo do **całego pliku** — ta druga opcja jest poprawna tylko przy fizycznie stałej mocy przez cały pomiar. Podczas otwierania kolejnych pomiarów można wywołać okno przyciskiem `Ustaw stałe Q…`.
 
 **Tabela w zakładce `Moc Q / R`:** szacowane `ON?`, `OFF?` i `P↑?` są widoczne automatycznie jako okresy robocze; przy `P↑?` zaznaczono możliwość zmiany obciążenia. Nie są to rzeczywiste dane elektryczne. Po podaniu stałej Q pojawią się wstępne wartości Q. `Nadpisz wybrany okres…` i `Dodaj nadpisanie` pozwalają zmienić Q także dla podprzedziału; ręczny wpis zawsze ma priorytet, nawet w szacowanym okresie OFF. Wykryta przerwa rejestracji kończy dotychczasową estymację stanu i następny okres pozostaje nieznany aż do nowego zdarzenia.
 
