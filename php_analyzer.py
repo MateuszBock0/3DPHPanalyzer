@@ -932,7 +932,8 @@ def _nice_ylim(values, pad=0.06, min_span=1.0):
 
 
 def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end_s: float | None = None,
-                  *, bottom_values=None, bottom_label=None, bottom_level_one=False):
+                  *, bottom_values=None, bottom_label=None, bottom_level_one=False,
+                  episode_reviews=None):
     """Jednolity PNG: naglowek, trzy osobne panele i osobna stopka.
 
     Wszystkie opisy, legendy i podpis osi X maja zarezerwowane miejsce,
@@ -1050,7 +1051,11 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
         right = min(xmax, ep.end) / 60.0
         if right <= left:
             continue
-        color = _episode_color(ep.kind)
+        assessment = (episode_reviews or {}).get(ep.display_id)
+        # Green requires known constant Q and an explicit cooling declaration.
+        # Otherwise the temperature-only K2 remains an amber candidate.
+        color = (COL['green'] if assessment is not None and assessment.code == 'K2_WARUNKOWE'
+                 else COL['amber'])
         for ax in axes:
             ax.axvspan(left, right, color=color, alpha=0.12, linewidth=0)
         ax1.text((left + right)/2, 0.986, ep.display_id,
@@ -1143,7 +1148,7 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
     ax2.tick_params(axis='x', labelbottom=False)
 
     footer.text(0.01, 0.78,
-                'O1, O2…: epizody oscylacyjne   |   zielone tło: poprawa ΔT   |   pomarańczowe tło: brak potwierdzonej poprawy',
+                'O1/O2: kandydaci oscylacji | zielony: K2 warunkowo przy stałej Q i deklarowanym chłodzeniu | pomarańczowy: niezweryfikowany',
                 ha='left', va='center', fontsize=9.2, color='#4A5969')
     footer.text(0.01, 0.30,
                 ('Dolny panel: ' + (bottom_label or 'wybrana metryka') +
@@ -1228,11 +1233,12 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
     return path
 
 def write_png(r: Analysis, directory: Path, *, bottom_values=None,
-              bottom_label=None, bottom_level_one=False):
+              bottom_label=None, bottom_level_one=False, episode_reviews=None):
     base = safe_name(Path(r.record.name).stem)
     general = directory / f'{base}_analiza.png'
     make_plot_png(r, general, bottom_values=bottom_values,
-                  bottom_label=bottom_label, bottom_level_one=bottom_level_one)
+                  bottom_label=bottom_label, bottom_level_one=bottom_level_one,
+                  episode_reviews=episode_reviews)
     zoom = []
     for ep in r.episodes:
         if not ep.oscillatory:
@@ -1240,7 +1246,7 @@ def write_png(r: Analysis, directory: Path, *, bottom_values=None,
         p = directory / f'{base}_{ep.display_id}_zblizenie.png'
         make_plot_png(r, p, ep.start - 300, ep.end + 300,
                       bottom_values=bottom_values, bottom_label=bottom_label,
-                      bottom_level_one=bottom_level_one)
+                      bottom_level_one=bottom_level_one, episode_reviews=episode_reviews)
         zoom.append(p)
     return general, zoom
 
