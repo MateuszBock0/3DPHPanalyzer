@@ -137,7 +137,8 @@ def effective_stages(periods: list[EstimatedPeriod], constant_q: Optional[float]
     return result
 
 
-def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optional[tuple[float, float]] = None):
+def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optional[tuple[float, float]] = None,
+              *, te=None, tc=None):
     """Return sampled Q, R_app [K/W], R/R_ref, and reference details.
 
     For normalization a single constant Q>0 must hold in the reference window;
@@ -146,6 +147,10 @@ def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optio
     stages = validate(stages)
     if len(t_seconds) != len(delta_k):
         raise ValueError('Niepasujące długości sygnałów.')
+    if (te is None) != (tc is None):
+        raise ValueError('Do kontroli quasi-ustalonej potrzebne są Te i Tc.')
+    if te is not None and (len(te) != len(t_seconds) or len(tc) != len(t_seconds)):
+        raise ValueError('Niepasujące długości temperatur referencyjnych.')
     boundaries = [s.start_min for s in stages]
     origin = float(t_seconds[0]) if t_seconds else 0.0
     q, rr_abs = [], []
@@ -189,14 +194,42 @@ def calculate(t_seconds, delta_k, stages: list[PowerStage], ref_range_min: Optio
                     if gap_inside:
                         reference_error = 'R_ref: okno odniesienia przecina lukę rejestracji danych.'
                     else:
-                        reference_q = target_q
-                        reference_r = _median([rr_abs[i] for i in in_window])
-                        if not math.isfinite(reference_r) or abs(reference_r) <= 1e-12:
-                            reference_error = 'R_ref zerowe lub nieokreślone.'
-                            reference_r = reference_q = None
-                        else:
-                            rr = [r / reference_r if r is not None and power is not None
-                                  and math.isclose(power, reference_q, abs_tol=1e-9, rel_tol=0)
-                                  else None for r, power in zip(rr_abs, q)]
+                        # In the desktop UI, thermocouple history is available.
+                        # Require a sufficiently long, quasi-stationary thermal
+                        # reference rather than accepting a rapid warm-up as R_ref.
+                        if te is not None and (b-a)*60 < 120 - 1e-7:
+                            reference_error = ('R_ref: wybierz co najmniej 2 minuty '
+                                               'ciągłych danych przy stałej mocy.')
+                        elif te is not None:
+                            n_part = max(1, len(in_window)//4)
+                            first, last = in_window[:n_part], in_window[-n_part:]
+                            centre_a = _median([t_seconds[i] for i in first])
+                            centre_b = _median([t_seconds[i] for i in last])
+                            minutes = (centre_b-centre_a)/60.0
+                            if minutes <= 0:
+                                reference_error = 'R_ref: za krótki odstęp czasu.'
+                            else:
+                                slopes = [
+                                    abs((_median([series[i] for i in last])
+                                         - _median([series[i] for i in first])) / minutes)
+                                    for series in (te, tc)
+                                ]
+                                if any(not math.isfinite(x) for x in slopes):
+                                    reference_error = 'R_ref: brak poprawnych temperatur.'
+                                elif max(slopes) > 0.5:
+                                    reference_error = (
+                                        'R_ref: temperatury nie są quasi-ustalone '
+                                        f'(maks. trend {max(slopes):.2f} °C/min > 0.50 °C/min). '
+                                        'Wybierz spokojniejszy odcinek.')
+                        if reference_error is None:
+                            reference_q = target_q
+                            reference_r = _median([rr_abs[i] for i in in_window])
+                            if not math.isfinite(reference_r) or abs(reference_r) <= 1e-12:
+                                reference_error = 'R_ref zerowe lub nieokreślone.'
+                                reference_r = reference_q = None
+                            else:
+                                rr = [r / reference_r if r is not None and power is not None
+                                      and math.isclose(power, reference_q, abs_tol=1e-9, rel_tol=0)
+                                      else None for r, power in zip(rr_abs, q)]
     return {'q': q, 'r': rr_abs, 'relative': rr, 'r_ref': reference_r,
             'q_ref': reference_q, 'reference_error': reference_error}
