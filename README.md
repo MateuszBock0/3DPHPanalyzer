@@ -90,3 +90,7 @@ Okno referencyjne musi obejmować wyłącznie jeden ciągły okres dodatniej, st
 - Ostatnia zakładka \`Metodyka i obliczenia\` i końcowa część \`Raport.html\` opisują wzory, progi K1/K2, detekcję ON?/OFF?, sposób liczenia Q i oporu, normalizację, proxy oraz niepewności. Dostępny jest też plik \`Metodyka_obliczen.html\`.
 
 Parametry detekcji mają charakter roboczy i wymagają walidacji naukowej. R_app=ΔT/Q [K/W] to wskaźnik pozorny względem mocy elektrycznej, nie bezpośredni pomiar mocy transportowanej przez PHP.
+
+**Automatyczny zapis konfiguracji:** po zmianie Q albo referencji aplikacja zapisuje ustawienia w katalogu użytkownika `~/.3dphpanalyzer/configurations/`. Przy ponownym wczytaniu identycznego pomiaru automatycznie przywraca ręczne przedziały Q, wybraną moc i okno odniesienia. Zgodność jest sprawdzana odciskiem SHA-256 wszystkich próbek. Działa też po przeniesieniu pliku do innego folderu. Nieprawidłowy zapis nie jest stosowany.
+
+**Referencja quasi-ustalona:** w interfejsie wymagany jest ciągły okres stałej dodatniej Q, co najmniej 2 minuty oraz trendy Te i Tc nie większe niż 0,50°C/min (roboczy próg do walidacji). Odrzucone okno nie generuje R/Rref.
