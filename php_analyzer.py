@@ -228,8 +228,11 @@ def parse_csv(data: bytes, name: str, origin: str) -> Record:
         raise ValueError('Mniej niż 120 poprawnych próbek')
     tt = unwrap_midnight_clock(tt)
     if any(b < a for a, b in zip(tt, tt[1:])):
-        pairs = sorted(zip(tt, yy), key=lambda p: p[0])
-        tt, yy = [x[0] for x in pairs], [x[1] for x in pairs]
+        raise ValueError(
+            'Niechronologiczne czasy PicoLog: wykryto cofnięcie zegara '
+            'inne niż jednoznaczne przejście przez północ. '
+            'Nie sortujemy próbek, ponieważ zmieniłoby to historię eksperymentu. '
+            'Wyeksportuj CSV z pełnymi datami lub rozdziel zapis.')
     # Remove exact timestamp duplicates; keep the last reading.
     if any(b == a for a, b in zip(tt, tt[1:])):
         clean_t, clean_y = [], []
@@ -810,7 +813,7 @@ def csv_summary(analyses: list[Analysis]):
             'ON_szacowane': sum(z.kind=='HEATING_ON_EST' for z in r.heating_events),
             'OFF_szacowane': sum(z.kind=='HEATING_OFF_EST' for z in r.heating_events),
             'czas_do_pierwszej_oscylacji_od_ON_min': fmt(oscillatory[0].from_heating_on_s/60 if oscillatory and oscillatory[0].from_heating_on_s is not None else None),
-            'pierwszy_epizod_min_od_csv': fmt(oscillatory[0].start/60 if oscillatory else None),
+            'pierwszy_epizod_min_od_csv': fmt((oscillatory[0].start-t[0])/60 if oscillatory else None),
             'laczny_czas_oscylacji_min': fmt(sum(e.end-e.start for e in oscillatory)/60),
             'udzial_czasu_oscylacji_pct': fmt(100*sum(e.end-e.start for e in oscillatory)/(t[-1]-t[0])),
             'status': ('OSC_PLUS_POPRAWA_DELTAT' if k2 else 'OSC_BEZ_POTWIERDZONEJ_POPRAWY' if oscillatory else 'TYLKO_PRZEJSCIA' if evs else 'BRAK_WYKRYTEGO_EPIZODU'),
@@ -831,8 +834,8 @@ def csv_episodes(analyses: list[Analysis], *, oscillatory_only: bool = False):
                 'status': e.kind,
                 'powtarzajace_sie_oscylacje': int(e.oscillatory),
                 'wspolna_poprawa_DeltaT_K2': int(e.k2),
-                'poczatek_min_od_csv': fmt(e.start/60),
-                'koniec_min_od_csv': fmt(e.end/60),
+                'poczatek_min_od_csv': fmt((e.start-r.record.t[0])/60),
+                'koniec_min_od_csv': fmt((e.end-r.record.t[0])/60),
                 'czas_trwania_min': fmt((e.end-e.start)/60),
                 'czas_od_szacowanego_ON_min': fmt(e.from_heating_on_s/60 if e.from_heating_on_s is not None else None),
                 'liczba_maksimow': e.peaks,
@@ -856,13 +859,13 @@ def csv_heating_events(analyses: list[Analysis]):
             'plik':r.record.name,
             'fragment_innego_pliku':r.record.fragment_of,
             'rodzaj_zdarzenia':e.kind,
-            'czas_od_poczatku_CSV_min':fmt(e.time/60),
+            'czas_od_poczatku_CSV_min':fmt((e.time-r.record.t[0])/60),
             'T_parownik_w_zdarzeniu_C':fmt(e.t_ev),
             'T_skraplacz_w_zdarzeniu_C':fmt(e.t_co),
             'zmiana_parownik_4min_C':fmt(e.te_change),
             'zmiana_skraplacz_4min_C':fmt(e.tc_change),
-            'przedzial_od_min':fmt(e.band_start/60,3) if e.band_start is not None else '',
-            'przedzial_do_min':fmt(e.band_end/60,3) if e.band_end is not None else '',
+            'przedzial_od_min':fmt((e.band_start-r.record.t[0])/60,3) if e.band_start is not None else '',
+            'przedzial_do_min':fmt((e.band_end-r.record.t[0])/60,3) if e.band_end is not None else '',
             'T_parownik_plateau_przed_C':fmt(e.t_before),
             'T_parownik_plateau_po_C':fmt(e.t_after),
             'metoda_przedzialu':e.method,
@@ -879,8 +882,8 @@ def csv_gaps(analyses: list[Analysis]):
             rows.append({
                 'plik':r.record.name,
                 'fragment_innego_pliku':r.record.fragment_of,
-                'ostatnia_probka_przed_luka_min':fmt(a/60,4),
-                'pierwsza_probka_po_luce_min':fmt(b/60,4),
+                'ostatnia_probka_przed_luka_min':fmt((a-r.record.t[0])/60,4),
+                'pierwsza_probka_po_luce_min':fmt((b-r.record.t[0])/60,4),
                 'czas_bez_danych_s':fmt(b-a,1),
                 'uwaga':'Brak odczytów: przebieg temperatury i stan grzałki w luce są nieznane',
             })
@@ -898,7 +901,7 @@ def export_series(r: Analysis, path: Path):
         e = next((ep for ep in r.episodes if ep.oscillatory and ep.start<=t<=ep.end), None)
         q = r.record.values[i]
         rows.append({
-            'czas_od_csv_min': fmt(t/60,4),
+            'czas_od_csv_min': fmt((t-times[0])/60,4),
             **{f'T_ch{ch}_C':fmt(q[k],3) for k,ch in enumerate(CHANNELS)},
             'T_parownik_C':fmt(r.te[i],3),
             'T_srodek_C':fmt(r.tm[i],3),
@@ -966,7 +969,7 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
                 chosen.update((i-1,i))
         inds=sorted(chosen)
 
-    x = [t[i] / 60 for i in inds]
+    x = [(t[i]-t[0]) / 60 for i in inds]
     individual = [[r.record.values[i][j] for i in inds] for j in range(6)]
     te = [r.te[i] for i in inds]
     tm = [r.tm[i] for i in inds]
@@ -994,9 +997,9 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
         # Break line tylko gdy pomiędzy próbkami wystąpiła prawdziwa luka.
         if j and bisect.bisect_right(gap_starts,t[inds[j-1]]) < bisect.bisect_right(gap_starts,t[idx]):
             chart_positions.append(None)
-            display_x.append((t[idx]+t[inds[j-1]])/120)
+            display_x.append((t[idx]+t[inds[j-1]]-2*t[0])/120)
         chart_positions.append(j)
-        display_x.append(t[idx]/60)
+        display_x.append((t[idx]-t[0])/60)
     def visible(values):
         return [math.nan if j is None else values[j] for j in chart_positions]
     missing_intervals=true_gaps
@@ -1034,12 +1037,12 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
 
     for before,after in missing_intervals:
         for ax in axes:
-            ax.axvspan(before/60,after/60,facecolor='#9BA8B2',alpha=0.15,linewidth=0)
-            ax.axvline(before/60,color='#8996A3',lw=0.8,alpha=0.5,linestyle=':')
-            ax.axvline(after/60,color='#8996A3',lw=0.8,alpha=0.5,linestyle=':')
+            ax.axvspan((before-t[0])/60,(after-t[0])/60,facecolor='#9BA8B2',alpha=0.15,linewidth=0)
+            ax.axvline((before-t[0])/60,color='#8996A3',lw=0.8,alpha=0.5,linestyle=':')
+            ax.axvline((after-t[0])/60,color='#8996A3',lw=0.8,alpha=0.5,linestyle=':')
         duration=(after-before)/60
         if duration>=3:
-            ax1.text((before+after)/120,0.55,f'BRAK DANYCH\n{duration:.1f} min',
+            ax1.text((before+after-2*t[0])/120,0.55,f'BRAK DANYCH\n{duration:.1f} min',
                      transform=ax1.get_xaxis_transform(),ha='center',va='center',
                      color='#4D5D6B',fontsize=11,weight='bold',
                      bbox=dict(facecolor='white',edgecolor='none',alpha=0.75,pad=5))
@@ -1047,8 +1050,8 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
     for ep in r.episodes:
         if not ep.oscillatory:
             continue
-        left = max(xmin, ep.start) / 60.0
-        right = min(xmax, ep.end) / 60.0
+        left = (max(xmin, ep.start)-t[0]) / 60.0
+        right = (min(xmax, ep.end)-t[0]) / 60.0
         if right <= left:
             continue
         assessment = (episode_reviews or {}).get(ep.display_id)
@@ -1073,13 +1076,13 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
         shade='#5A6783' if is_on else '#8472A3'
         for ax in axes:
             if ev.band_start is not None and ev.band_end is not None:
-                ax.axvspan(ev.band_start/60, ev.band_end/60,
+                ax.axvspan((ev.band_start-t[0])/60, (ev.band_end-t[0])/60,
                            facecolor=shade, alpha=0.14, lw=0)
                 # Dwie krawędzie strefy niepewności reakcji temperaturowej.
                 ax.axvline(ev.band_start/60,color=shade,lw=0.8,alpha=0.6,linestyle=':')
                 ax.axvline(ev.band_end/60,color=shade,lw=0.8,alpha=0.6,linestyle=':')
             else:
-                ax.axvline(ev.time/60, color=shade, linestyle=':', lw=1.2, alpha=0.6)
+                ax.axvline((ev.time-t[0])/60, color=shade, linestyle=':', lw=1.2, alpha=0.6)
         near_prev = k>0 and ev.time-visible_heat[k-1].time < 7*60
         y_label = 0.75 if near_prev else 0.94
         ax1.annotate('ON?' if is_on else 'OFF?', xy=(ev.time/60, y_label),
@@ -1087,12 +1090,10 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
                      textcoords='offset points', ha='left', va='top', fontsize=9,
                      color=shade, rotation=90, fontweight='bold')
 
-    # Operator-confirmed or edited markers: separate from dotted thermal guesses.
-    # The legacy PNG engine plots absolute PicoLog seconds / 60, therefore
-    # a user-relative marker needs the original CSV start as an offset.
+    # Display times are relative to the first CSV sample, as in the GUI.
     for marker in operator_events:
-        when = t[0]/60 + marker.time_min
-        if not xmin/60 <= when <= xmax/60:
+        when = marker.time_min
+        if not (xmin-t[0])/60 <= when <= (xmax-t[0])/60:
             continue
         color = '#167957' if marker.kind != 'OFF' else '#BF4A52'
         for axis in axes:
@@ -1150,7 +1151,7 @@ def make_plot_png(r: Analysis, out_path: Path, start_s: float | None = None, end
         ax3.set_ylim(bottom=0, top=max(max(activity) * 1.12, r.threshold * 1.35, 1.0))
     ax3.legend(loc='upper left', fontsize=9, framealpha=0.88)
     ax3.set_xlabel('Czas od początku rejestracji CSV [min]', fontsize=11, labelpad=7)
-    ax3.set_xlim(xmin/60, xmax/60)
+    ax3.set_xlim((xmin-t[0])/60, (xmax-t[0])/60)
 
     for ax in axes:
         ax.grid(True, color=COL['grid'], alpha=0.65, linewidth=0.7)
@@ -1198,7 +1199,7 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
     for index,(ax,e) in enumerate(zip(axs_flat,events)):
         lo=max(t[0],e.time-200);hi=min(t[-1],e.time+280)
         left=bisect.bisect_left(t,lo);right=bisect.bisect_right(t,hi)
-        time=[v/60 for v in t[left:right]]
+        time=[(v-t[0])/60 for v in t[left:right]]
         te=r.te[left:right];tc=r.tc[left:right]
         # Plot separately across measurement gaps
         xplot=list(time);ep=list(te);cp=list(tc)
@@ -1211,14 +1212,14 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
         ax.plot(xplot,cp,color=COL['co'],lw=1.7,label='Skraplacz')
         if e.band_start is not None and e.band_end is not None:
             color = COL['ev'] if e.kind == 'HEATING_OFF_EST' else COL['co']
-            ax.axvspan(e.band_start/60,e.band_end/60,color=color,alpha=.19,zorder=-1)
+            ax.axvspan((e.band_start-t[0])/60,(e.band_end-t[0])/60,color=color,alpha=.19,zorder=-1)
             ax.axvline(e.band_start/60,color=color,alpha=.7,ls=':',lw=1)
             ax.axvline(e.band_end/60,color=color,alpha=.7,ls=':',lw=1)
         if e.t_before is not None:
             ax.axhspan(e.t_before-1,e.t_before+1,color=COL['middle'],alpha=.15,zorder=-2)
             ax.axhline(e.t_before,color=COL['middle'],lw=1.2,ls='--',alpha=.85)
         ident='OFF?' if e.kind=='HEATING_OFF_EST' else 'P↑?' if e.kind=='HEATING_INCREASE_EST' else 'ON?'
-        eventtext=f'{ident}: {e.time/60:.2f} min'
+        eventtext=f'{ident}: {(e.time-t[0])/60:.2f} min'
         if e.band_start is not None:
             eventtext+=f'  |  zakres: {e.band_start/60:.2f}–{e.band_end/60:.2f} min'
         ax.set_title(eventtext,fontsize=11,color='#293C4C')
@@ -1227,10 +1228,10 @@ def make_heating_diagnostics(r: Analysis, directory: Path):
                     fontsize=8.5,color='#935D26',transform=ax.transAxes,
                     bbox=dict(facecolor='white',edgecolor='none',alpha=.8))
         ax.set_ylabel('Temperatura [°C]')
-        ax.set_xlabel('Czas rejestracji [min]')
+        ax.set_xlabel('Czas od początku CSV [min]')
         ax.grid(alpha=.21)
         ax.legend(loc='upper right',fontsize=8.5)
-        ax.set_xlim(lo/60,hi/60)
+        ax.set_xlim((lo-t[0])/60,(hi-t[0])/60)
     for ax in axs_flat[len(events):]:
         ax.axis('off')
     fig.suptitle(r.record.name + ' — zbliżenia reakcji ON?/OFF? (±1°C)',
@@ -1345,8 +1346,8 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
             for h in r.heating_events:
                 typ='ON?' if h.kind=='HEATING_ON_EST' else 'OFF?' if h.kind=='HEATING_OFF_EST' else 'P↑?'
                 method='poziom stabilny +-1°C' if h.method=='PLATEAU_PLUS_MINUS_1C' else 'orientacyjnie (brak stabilnego poziomu)'
-                btxt=(fmt(h.band_start/60,2)+'–'+fmt(h.band_end/60,2)) if h.band_start is not None else '—'
-                out.append('<tr><td>'+typ+'</td><td>'+fmt(h.time/60)+'</td><td>'+btxt+'</td><td>'+fmt(h.t_before)+'</td><td>'+fmt(h.t_after)+'</td><td>'+method+'</td></tr>')
+                btxt=(fmt((h.band_start-r.record.t[0])/60,2)+'–'+fmt((h.band_end-r.record.t[0])/60,2)) if h.band_start is not None else '—'
+                out.append('<tr><td>'+typ+'</td><td>'+fmt((h.time-r.record.t[0])/60)+'</td><td>'+btxt+'</td><td>'+fmt(h.t_before)+'</td><td>'+fmt(h.t_after)+'</td><td>'+method+'</td></tr>')
             out.append('</table></div>')
         if byfile.get(name):
             extra_header = '<th>Przesłanki pracy PHP?</th>' if activity_reviews is not None else ''
@@ -1369,7 +1370,7 @@ def render_html(analyses, summaries, events, plot_index, ignored, bad,
             out.append('<details><summary>Pozostałe przejścia termiczne — '+str(len(trans))+' (techniczne, bez oznaczeń na wykresie)</summary>')
             out.append('<p class="muted">Zmiana temperatury lub sygnał RMS, ale brak wymaganej serii oscylacji. Możliwy wpływ zmian mocy.</p><div class="scroll"><table><tr><th>ID</th><th>Od [min]</th><th>Do [min]</th><th>ΔT w zdarzeniu [K]</th></tr>')
             for ep in trans:
-                out.append('<tr><td>'+ep.display_id+'</td><td>'+fmt(ep.start/60)+'</td><td>'+fmt(ep.end/60)+'</td><td>'+fmt(ep.median_delta)+'</td></tr>')
+                out.append('<tr><td>'+ep.display_id+'</td><td>'+fmt((ep.start-r.record.t[0])/60)+'</td><td>'+fmt((ep.end-r.record.t[0])/60)+'</td><td>'+fmt(ep.median_delta)+'</td></tr>')
             out.append('</table></div></details>')
         out.append('<p class="muted">'+xml(' · '.join(r.notes))+'</p></section>')
     if ignored or bad:
