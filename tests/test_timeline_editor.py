@@ -13,6 +13,19 @@ from session_config import export_configuration, validated_import
 from session_store import save_session, restore_session, session_path
 
 
+class InlinePowerTests(unittest.TestCase):
+    def test_decimal_comma_and_decimal_dot(self):
+        from timeline_gui import parse_inline_q
+        self.assertEqual(parse_inline_q('12,5'),12.5)
+        self.assertEqual(parse_inline_q(' 20.0 '),20.0)
+
+    def test_empty_power_never_defaults_to_guessed_10_w(self):
+        from timeline_gui import parse_inline_q
+        for raw in ('', ' ', 'abc', '0', '-10', 'nan', 'inf'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                parse_inline_q(raw)
+
+
 class TimelineTests(unittest.TestCase):
     def setUp(self):
         self.duration=20.
