@@ -925,12 +925,20 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 f'{(ep.start-first)/60:.2f}', f'{(ep.end-first)/60:.2f}',
                 f'{ep.median_delta:.2f}', row['k2_reviews'][ep.display_id].label,
                 ep.peaks))
-        for event in a.heating_events:
-            self.onoff_tree.insert('', 'end', values=(event.kind.replace('HEATING_', '').replace('_EST', '?'),
-                f'{(event.time-first)/60:.2f}',
-                f'{(event.band_start-first)/60:.2f}' if event.band_start is not None else '—',
-                f'{(event.band_end-first)/60:.2f}' if event.band_end is not None else '—',
-                event.method))
+        for suggestion in row.get('thermal_suggestions', []):
+            # Raw thermal uncertainty bands are valid only at the ORIGINAL time.
+            raw=next((e for e in a.heating_events
+                      if e.kind==suggestion.kind and
+                      abs((e.time-first)/60-suggestion.time_min)<1e-6),None)
+            is_raw=suggestion.source=='automatic' and raw is not None
+            label={'HEATING_ON_EST':'ON?','HEATING_OFF_EST':'OFF?',
+                   'HEATING_INCREASE_EST':'P↑?'}[suggestion.kind]
+            self.onoff_tree.insert('', 'end', values=(
+                label, f'{suggestion.time_min:.2f}',
+                f'{(raw.band_start-first)/60:.2f}' if is_raw and raw.band_start is not None else '—',
+                f'{(raw.band_end-first)/60:.2f}' if is_raw and raw.band_end is not None else '—',
+                (raw.method if is_raw else
+                 'KOREKTA operatora; nie potwierdza przełączenia elektrycznego')))
         caution = 'K2 termiczne jest kandydatem; status zależy od stałej Q i deklaracji chłodzenia. Nie dowodzi przepływu PHP.'
         self.notes.set(caution + '  ' + ('; '.join(a.notes) if a.notes else 'Brak ostrzeżeń.'))
 
@@ -1104,9 +1112,19 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._writer(out/'przedzialy_Q.csv', ['od_min', 'do_min', 'Q_W', 'pochodzenie'],
                      [[s.start_min, s.end_min, s.q_w, 'harmonogram wynikowy: automatyczny + nadpisania']
                       for s in row['effective_stages']])
+        _seg,original_gaps=engine.recording_segments(a.record.t)
+        original_periods=derive_estimated_periods(
+            a.record.t,a.heating_events,original_gaps)
         self._writer(out/'wykryte_okresy_ON_OFF.csv',
                      ['od_min', 'do_min', 'stan_szacowany', 'uwagi'],
-                     [[p.start_min, p.end_min, p.state, p.note] for p in row['periods']])
+                     [[p.start_min, p.end_min, p.state, p.note] for p in original_periods])
+        self._writer(out/'okresy_ON_OFF_po_korekcie.csv',
+                     ['od_min','do_min','stan_szacowany_po_korekcie','uwagi'],
+                     [[p.start_min,p.end_min,p.state,p.note] for p in row['periods']])
+        self._writer(out/'sugestie_ON_OFF_po_korekcie.csv',
+                     ['czas_min','stan_termiczny','pochodzenie'],
+                     [[ev.time_min,ev.kind,ev.source]
+                      for ev in row.get('thermal_suggestions',[])])
         self._writer(out/'reczne_zdarzenia_ON_OFF_Q.csv',
                      ['czas_min','rodzaj','Q_W','pochodzenie'],
                      [[ev.time_min, ev.kind, '' if ev.q_w is None else ev.q_w, ev.source]
@@ -1184,10 +1202,11 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         engine.write_png(a, plotdir, bottom_values=values,
                          bottom_label=label, bottom_level_one=level,
                          episode_reviews=row['k2_reviews'],
-                         operator_events=row.get('timeline_events', []))
+                         operator_events=row.get('timeline_events', []),
+                         thermal_suggestions=row.get('thermal_suggestions', []))
         (folder/'panel_wykresu.txt').write_text(
             'Trzeci panel: ' + label + '\nQ jest wpisywana przez operatora. '
-            'ON?/OFF? to estymacja z temperatur.\n', encoding='utf-8')
+            'ON?/OFF? to estymacja z temperatur, możliwa ręczna korekta.\n', encoding='utf-8')
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
