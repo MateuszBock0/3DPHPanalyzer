@@ -1426,6 +1426,33 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
+        overview=build_experiment_summary(row)
+        self._writer(folder/'podsumowanie_eksperymentu.csv',
+                     ['plik','czas_zapisu_min','liczba_epizodow_O',
+                      'pierwszy_epizod','pierwszy_epizod_min_od_CSV',
+                      'pierwszy_epizod_min_od_ON','pochodzenie_ON',
+                      'Q_przypisana','Q_uwagi','zmiana_DeltaT_O1','DeltaT_uwagi',
+                      'R_app_mediana_O1','R_app_uwagi','chlodzenie_potwierdzone'],
+                     [[overview.filename,f'{overview.duration_min:.4f}',overview.count,
+                       overview.first_id or '',
+                       '' if overview.first_min is None else f'{overview.first_min:.4f}',
+                       '' if overview.first_from_on_min is None
+                       else f'{overview.first_from_on_min:.4f}',
+                       overview.on_provenance,overview.q_display,overview.q_detail,
+                       overview.delta_display,overview.delta_detail,
+                       overview.r_display,overview.r_detail,
+                       int(overview.cooling_confirmed)]])
+        self._writer(folder/'epizody_podsumowanie.csv',
+                     ['epizod','od_min_CSV','do_min_CSV','czas_min','DeltaT_przed_K',
+                      'DeltaT_w_epizodzie_K','zmiana_DeltaT_pct','K2_termiczne',
+                      'status_K2','ocena_aktywnosci'],
+                     [[e.ident,f'{e.start_min:.4f}',f'{e.end_min:.4f}',
+                       f'{e.duration_min:.4f}',
+                       '' if e.delta_before_k is None else f'{e.delta_before_k:.4f}',
+                       f'{e.delta_during_k:.4f}',
+                       '' if e.reduction_pct is None else f'{e.reduction_pct:.3f}',
+                       int(e.k2_thermal),e.k2_label,e.activity_label]
+                      for e in overview.episodes])
         self._writer(folder/'ocena_aktywnosci_PHP.csv',
                      ['plik','epizod','ocena','status','delta_Te_C','delta_Tc_C',
                       'delta_roznicy_K','Q_zrodlo','Q_W','przeslanki','co_sprawdzic'],
