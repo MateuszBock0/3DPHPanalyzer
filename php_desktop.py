@@ -753,7 +753,8 @@ class PHPDesktop(tk.Tk):
         if field == 'rms': bottom.axhline(a.threshold, ls='--', color='#ad693d', lw=1, label='Próg K1')
         for span in a.episodes:
             if span.oscillatory:
-                c = '#c4e4dc' if span.k2 else '#f8ead2'
+                k2_status = row['k2_reviews'].get(span.display_id)
+                c = '#c4e4dc' if k2_status is not None and k2_status.code == 'K2_WARUNKOWE' else '#f8ead2'
                 for axis in self.axes: axis.axvspan((span.start-t0)/60, (span.end-t0)/60, color=c, alpha=.33)
         segments, gaps = engine.recording_segments(rec.t)
         for left, right in gaps:
@@ -856,7 +857,8 @@ class PHPDesktop(tk.Tk):
         plotdir = folder/'wykresy'; plotdir.mkdir(exist_ok=True)
         values, label, level = self._bottom_panel_export(row)
         engine.write_png(a, plotdir, bottom_values=values,
-                         bottom_label=label, bottom_level_one=level)
+                         bottom_label=label, bottom_level_one=level,
+                         episode_reviews=row['k2_reviews'])
         (folder/'panel_wykresu.txt').write_text(
             'Trzeci panel: ' + label + '\nQ jest wpisywana przez operatora. '
             'ON?/OFF? to estymacja z temperatur.\n', encoding='utf-8')
