@@ -20,7 +20,7 @@ class TestPower(unittest.TestCase):
         self.assertIsNotNone(out['reference_error'])
     def test_reference_at_same_power_only(self):
         out = calculate(list(range(10)), [10.]*10,
-                        [PowerStage(0,5/60,10),PowerStage(5/60,2,20)], (0,4/60))
+                        [PowerStage(0,5/60,10),PowerStage(5/60,2,20)], (0,5/60))
         self.assertAlmostEqual(out['r_ref'], 1.)
         self.assertEqual(out['relative'][:5], [1.]*5)
         self.assertTrue(all(x is None for x in out['relative'][5:]))
