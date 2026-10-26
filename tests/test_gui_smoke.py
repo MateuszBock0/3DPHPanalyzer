@@ -7,7 +7,6 @@ import unittest
 import os
 from types import SimpleNamespace
 
-import php_desktop as desktop
 from power_model import derive_estimated_periods
 
 
@@ -15,6 +14,7 @@ from power_model import derive_estimated_periods
                      'Tkinter requires a desktop display or xvfb-run')
 class DesktopTimelineSmokeTests(unittest.TestCase):
     def setUp(self):
+        import php_desktop as desktop
         self.app=desktop.PHPDesktop()
         self.app.withdraw()
         self.app._first_q_dialog_done=True
