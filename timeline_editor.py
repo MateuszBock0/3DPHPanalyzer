@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from math import isfinite
 from statistics import median
 from bisect import bisect_left
+from types import SimpleNamespace
 from power_model import PowerStage, effective_stages, validate
 
 
@@ -130,9 +131,13 @@ def snap_to_recorded_sample(minutes, seconds, *, max_offset_s=35.):
         raise ValueError('Brak zarejestrowanych próbek.')
     target=seconds[0]+60*minutes
     j=bisect_left(seconds,target)
+    step=median((b-a for a,b in zip(seconds,seconds[1:]) if b>a)) if len(seconds)>1 else 1.
+    gap_threshold=max(10.0,5.0*step)
+    if 0 < j < len(seconds) and seconds[j-1] < target < seconds[j] and (
+            seconds[j]-seconds[j-1] > gap_threshold):
+        raise ValueError('Kliknięto w lukę rejestracji; nie można określić czasu ON/OFF bez danych.')
     candidates=[seconds[i] for i in (j-1,j) if 0 <= i < len(seconds)]
     chosen=min(candidates,key=lambda t:abs(t-target))
-    step=median((b-a for a,b in zip(seconds,seconds[1:]) if b>a)) if len(seconds)>1 else 1.
     tolerance=max(max_offset_s,2.5*step)
     if abs(target-chosen)>tolerance:
         raise ValueError('Kliknięto w lukę rejestracji, bez pobliskiej próbki. Wybierz czas z dostępnymi pomiarami.')
@@ -147,5 +152,46 @@ def last_heating_boundary(transitions, duration_min):
     """
     ordered = validate_transitions(transitions, duration_min) if transitions else []
     if ordered and ordered[-1].kind == 'OFF':
-        return ordered[-1].time_min, 'OFF (wpis operatora)', ordered[-1].source == 'operator'
+        label = ('OFF (wpis operatora)' if ordered[-1].source == 'operator'
+                 else 'OFF? (zaakceptowana sugestia termiczna)')
+        return ordered[-1].time_min, label, ordered[-1].source == 'operator'
     return duration_min, 'KONIEC CSV — OFF niepotwierdzone', False
+
+
+@dataclass(frozen=True)
+class ThermalSuggestion:
+    """Editable temperature-response boundary, not an electrical switch."""
+    time_min: float
+    kind: str  # HEATING_ON_EST / HEATING_OFF_EST / HEATING_INCREASE_EST
+    source: str = 'automatic'  # automatic / operator_adjusted / operator_added
+
+
+SUGGESTION_KINDS = frozenset(('HEATING_ON_EST', 'HEATING_OFF_EST', 'HEATING_INCREASE_EST'))
+SUGGESTION_SOURCES = frozenset(('automatic', 'operator_adjusted', 'operator_added'))
+
+
+def validate_suggestions(suggestions, duration_min):
+    if not isfinite(duration_min) or duration_min <= 0:
+        raise ValueError('Nieprawidłowy czas pomiaru.')
+    ordered=sorted(suggestions,key=lambda s:s.time_min)
+    for i, marker in enumerate(ordered):
+        if marker.kind not in SUGGESTION_KINDS or marker.source not in SUGGESTION_SOURCES:
+            raise ValueError('Niepoprawny typ lub pochodzenie sugestii termicznej.')
+        if not isfinite(marker.time_min) or marker.time_min < 0 or marker.time_min > duration_min:
+            raise ValueError('Sugestia ON?/OFF? musi leżeć w granicach pomiaru.')
+        if i and marker.time_min-ordered[i-1].time_min < 1e-6:
+            raise ValueError('Dwie sugestie nie mogą znajdować się w identycznym czasie.')
+    return ordered
+
+
+def initial_suggestions(heating_events, first_s, duration_min):
+    return validate_suggestions([
+        ThermalSuggestion((float(e.time)-first_s)/60, e.kind)
+        for e in heating_events if e.kind in SUGGESTION_KINDS
+    ], duration_min)
+
+
+def suggested_heating_events(suggestions, origin_s):
+    """Only for deriving provisional ON?/OFF?/P_UP? periods; leaves K1/K2 raw events intact."""
+    return [SimpleNamespace(kind=s.kind,time=origin_s+60*s.time_min)
+            for s in suggestions]
