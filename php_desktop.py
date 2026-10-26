@@ -813,14 +813,32 @@ class PHPDesktop(tk.Tk):
         config = export_configuration(row)
         (out/'konfiguracja.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
 
+    def _bottom_panel_export(self, row):
+        """Use the same numeric metric as the currently selected GUI panel."""
+        a, r = row['analysis'], row['results']
+        modes = {
+            'R pozorny [K/W]': (r['r'], 'R_app [K/W]', False),
+            'R względny [-]': (r['relative'], 'R/Rref [−]', True),
+            'R proxy ΔT/ΔTref': (a.r_rel_proxy, 'ΔT/ΔTref (proxy) [−]', True),
+            'Aktywność RMS [°C]': (a.activity, 'RMS aktywności [°C]', False),
+            'Q [W]': (r['q'], 'Q [W]', False),
+        }
+        return modes[self.panel_var.get()]
+
     def _export_one(self, row, folder):
         a = row['analysis']
         folder.mkdir(parents=True, exist_ok=True)
         plotdir = folder/'wykresy'; plotdir.mkdir(exist_ok=True)
-        engine.write_png(a, plotdir)
+        values, label, level = self._bottom_panel_export(row)
+        engine.write_png(a, plotdir, bottom_values=values,
+                         bottom_label=label, bottom_level_one=level)
+        (folder/'panel_wykresu.txt').write_text(
+            'Trzeci panel: ' + label + '\nQ jest wpisywana przez operatora. '
+            'ON?/OFF? to estymacja z temperatur.\n', encoding='utf-8')
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
+        (folder/'Metodyka_obliczen.html').write_text(methodology.as_html(), encoding='utf-8')
 
     def export_selected(self):
         if self.active is None: return messagebox.showinfo('Eksport', 'Najpierw wybierz pomiar.')
@@ -845,12 +863,30 @@ class PHPDesktop(tk.Tk):
                 folder = out/path_safe(r.record.name)
                 self._export_one(row, folder)
                 analyses.append(r)
-                idx[r.record.name] = (path_safe(r.record.name)+'/wykresy/'+
-                    engine.safe_name(Path(r.record.name).stem)+'_analiza.png', [], None)
+                base = path_safe(r.record.name)
+                zooms = [base+'/wykresy/'+base+'_'+ep.display_id+'_zblizenie.png'
+                         for ep in r.episodes if ep.oscillatory]
+                diag = (base+'/wykresy/'+base+'_ONOFF_zblizenia.png'
+                        if r.heating_events else None)
+                idx[r.record.name] = (base+'/wykresy/'+base+'_analiza.png', zooms, diag)
             summary = engine.csv_summary(analyses)
             events = engine.csv_episodes(analyses)
+            engine.write_csv(out/'wszystkie_epizody.csv', events,
+                             list(events[0]) if events else ['plik','epizod'])
+            engine.write_csv(out/'wszystkie_zdarzenia_termiczne.csv', events,
+                             list(events[0]) if events else ['plik','epizod'])
+            heating = engine.csv_heating_events(analyses)
+            engine.write_csv(out/'zmiany_grzania.csv', heating,
+                             list(heating[0]) if heating else ['plik','rodzaj_zdarzenia'])
+            gaps = engine.csv_gaps(analyses)
+            engine.write_csv(out/'luki_rejestracji.csv', gaps,
+                             list(gaps[0]) if gaps else ['plik','od_min','do_min'])
+            label = self._bottom_panel_export(self.record_rows[0])[1]
             with (out/'Raport.html').open('w', encoding='utf-8') as f:
-                f.write(engine.render_html(analyses, summary, events, idx, [], []))
+                f.write(engine.render_html(analyses, summary, events, idx, [], [],
+                      desktop_mode=True, panel_label=label,
+                      methodology_html=methodology.as_html(embedded=True)))
+            (out/'Metodyka_obliczen.html').write_text(methodology.as_html(), encoding='utf-8')
             self._writer(out/'podsumowanie_testow.csv', list(summary[0]) if summary else [],
                          [[x.get(k, '') for k in summary[0]] for x in summary] if summary else [])
             messagebox.showinfo('Eksport', f'Zapisano {len(analyses)} pomiarów w:\n{out}')
