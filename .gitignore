@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.spec
+Results/
+*.csv
+*.picolog
+*.zip
+!Experiments/.gitkeep
