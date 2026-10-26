@@ -825,6 +825,9 @@ def csv_summary(analyses: list[Analysis]):
 def csv_episodes(analyses: list[Analysis], *, oscillatory_only: bool = False):
     rows = []
     for r in analyses:
+        # Lightweight report fixtures may have no raw time array.
+        # Real PicoLog records always provide it.
+        origin = r.record.t[0] if getattr(r.record,'t',None) else 0.0
         for e in r.episodes:
             if oscillatory_only and not e.oscillatory:
                 continue
@@ -834,8 +837,8 @@ def csv_episodes(analyses: list[Analysis], *, oscillatory_only: bool = False):
                 'status': e.kind,
                 'powtarzajace_sie_oscylacje': int(e.oscillatory),
                 'wspolna_poprawa_DeltaT_K2': int(e.k2),
-                'poczatek_min_od_csv': fmt((e.start-r.record.t[0])/60),
-                'koniec_min_od_csv': fmt((e.end-r.record.t[0])/60),
+                'poczatek_min_od_csv': fmt((e.start-origin)/60),
+                'koniec_min_od_csv': fmt((e.end-origin)/60),
                 'czas_trwania_min': fmt((e.end-e.start)/60),
                 'czas_od_szacowanego_ON_min': fmt(e.from_heating_on_s/60 if e.from_heating_on_s is not None else None),
                 'liczba_maksimow': e.peaks,
