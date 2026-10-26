@@ -804,6 +804,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._recalculate()
         self._render_events()
         self._render_diagnosis()
+        self._autosave_current()
         self.status.set('Zmieniono deklarację warunków chłodzenia; kwalifikacja K2 przeliczona.')
 
     def _recalculate(self, notify=False):
