@@ -71,6 +71,43 @@ class SummaryModelTests(unittest.TestCase):
         self.assertIn('Zmiana Q',overview.r_detail)
         self.assertIn('10 / 20 W',overview.q_display)
 
+    def test_old_operator_on_must_not_authorize_later_guessed_power(self):
+        row=fixture(
+            timeline=[Transition(0,'ON',10,'operator'),
+                      Transition(2,'OFF',0,'operator')],
+            power=[PowerStage(0,2,10),PowerStage(2,4,0),
+                   PowerStage(4,10,20)])
+        overview=build_experiment_summary(row)
+        self.assertIn('szacunkowo przypisanej',overview.r_detail)
+        self.assertNotIn('ręcznie wpisanej',overview.r_detail)
+
+    def test_clock_gap_between_on_and_o1_invalidates_elapsed_time(self):
+        row=fixture(
+            timeline=[Transition(1,'ON',10,'operator')])
+        times=list(range(301))+list(range(4000,4301))
+        row['record'].t=times
+        row['analysis'].episodes[0].start=4100.
+        row['analysis'].episodes[0].end=4200.
+        overview=build_experiment_summary(row)
+        self.assertIsNone(overview.first_from_on_min)
+        self.assertIn('Luka rejestracji',overview.on_provenance)
+        self.assertGreater(overview.first_min,60.)
+
+    def test_thermal_on_gap_also_cannot_start_timer(self):
+        row=fixture(suggestions=[ThermalSuggestion(1,'HEATING_ON_EST')])
+        row['record'].t=list(range(301))+list(range(4000,4301))
+        row['analysis'].episodes[0].start=4100.
+        row['analysis'].episodes[0].end=4200.
+        overview=build_experiment_summary(row)
+        self.assertIsNone(overview.first_from_on_min)
+        self.assertIn('Luka rejestracji',overview.on_provenance)
+
+    def test_inconsistent_baseline_never_crashes_summary(self):
+        row=fixture(delta_before=None,reduction=10.)
+        overview=build_experiment_summary(row)
+        self.assertEqual(overview.delta_display,'—')
+        self.assertIn('Brak wiarygodnej',overview.delta_detail)
+
     def test_no_episodes_no_false_startup(self):
         overview=build_experiment_summary(fixture(episodes=False))
         self.assertEqual(overview.count,0)
