@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Offline analysis of 3D pulsating heat pipe experiments: temperatures, power, ΔT and apparent thermal resistance.">
+  <title>3D PHP Analyzer — Offline</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">∿</div>
+    <div><strong>3D PHP Analyzer</strong><small>Laboratory temperature analysis</small></div>
+  </div>
+  <div class="offline-tag">● Offline · dane lokalne</div>
+</header>
+
+<main>
+  <section class="intro">
+    <div>
+      <div class="eyebrow">Pulsating Heat Pipe · narzędzie badawcze</div>
+      <h1>Od pliku PicoLog do wykresów i oporu cieplnego.</h1>
+      <p>Wczytaj CSV, przypisz czujniki, wprowadź rzeczywistą moc grzania Q i eksportuj wyniki. Bez instalowania Pythona, konta ani wysyłania danych na serwer.</p>
+    </div>
+    <div class="intro-note"><strong>Ważne metodologicznie</strong><span>Q nie jest zgadywane z temperatury. R<sub>app</sub> = (T<sub>e</sub> − T<sub>c</sub>) / Q jest pozornym oporem względem mocy zadanej i wymaga ostrożnej interpretacji w stanach przejściowych.</span></div>
+  </section>
+
+  <div id="dropzone" class="dropzone" role="region" aria-label="Import plików CSV">
+    <div class="upload-icon">⇧</div>
+    <div><strong>Upuść tutaj pliki CSV</strong><span>Obsługiwane m.in. eksporty PicoLog z polskim przecinkiem dziesiętnym.</span></div>
+    <button id="pickButton" class="button primary" type="button">Wybierz pliki</button>
+    <input id="files" type="file" accept=".csv,.txt,text/csv,text/plain" multiple hidden>
+  </div>
+  <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+
+  <div id="workspace" class="hidden">
+    <section class="workspace-header card">
+      <div class="workspace-title"><label for="datasetSelect">Aktywny pomiar</label><select id="datasetSelect"></select></div>
+      <div class="actions">
+        <button id="exportCsv" class="button" type="button">Eksport danych CSV</button>
+        <button id="exportZip" class="button primary" type="button">Pobierz raport ZIP</button>
+      </div>
+      <div id="dataSummary" class="summary"></div>
+    </section>
+
+    <div class="config-grid">
+      <section class="card">
+        <div class="section-header"><div><h2>Konfiguracja termopar</h2><p>Wybierz strefy pomiarowe. Domyślnie ch1/3, ch4/5, ch6/7.</p></div></div>
+        <div class="mapping-grid">
+          <label>Parownik (Te)<select id="evapChannels" multiple size="6"></select></label>
+          <label>Sekcja środkowa (Tm)<select id="midChannels" multiple size="6"></select></label>
+          <label>Skraplacz (Tc)<select id="condChannels" multiple size="6"></select></label>
+        </div>
+        <p class="hint">Ctrl/Cmd + klik: zaznacz kilka kanałów. Średnie strefowe wykorzystują dostępne termopary.</p>
+      </section>
+      <section class="card">
+        <div class="section-header"><div><h2>Harmonogram mocy Q</h2><p>Etapy grzania i wyłączenia w minutach od początku CSV.</p></div><button id="addStage" class="button small" type="button">+ Dodaj etap</button></div>
+        <div class="table-scroll"><table class="power-table">
+          <thead><tr><th>Od [min]</th><th>Do [min]</th><th>Q [W]</th><th></th></tr></thead>
+          <tbody id="powerRows"></tbody>
+        </table></div>
+        <p id="powerWarning" class="hint">Bez wpisanej mocy pokazywane są temperatury i ΔT; R [K/W] pozostaje niedostępne.</p>
+        <div class="reference-config">
+          <label class="checkline"><input type="checkbox" id="enableRef"> Oblicz względny R/R<sub>ref</sub></label>
+          <div class="range-pair"><label>Ref. od [min]<input id="refFrom" inputmode="decimal" type="number" min="0" step="any" value="0"></label><label>Ref. do [min]<input id="refTo" inputmode="decimal" type="number" min="0" step="any" value="10"></label></div>
+          <p id="refStatus" class="hint">Normalizacja wymaga okna referencyjnego przy stałej, dodatniej mocy; porównania tylko przy tej samej Q.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="section-header"><div><h2>Zakres osi czasu</h2><p>Powiększ interesujący fragment bez zmiany danych źródłowych.</p></div><button id="resetZoom" class="button small" type="button">Pełny przebieg</button></div>
+      <div class="zoom-grid"><label>Od [min]<input id="zoomFrom" type="number" min="0" step="any" value="0"></label><label>Do [min]<input id="zoomTo" type="number" min="0" step="any"></label><div id="zoomStatus" class="hint"></div></div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="card plot-card">
+      <div class="section-header"><div><h2>Temperatury w strefach</h2><p>Średnie strefowe i pojedyncze termopary.</p></div><div class="actions"><button class="button small" data-svg="0">SVG</button><button class="button small" data-png="0">PNG</button></div></div>
+      <div class="legend"><span class="red">● Parownik</span><span class="gold">● Środek</span><span class="blue">● Skraplacz</span></div><div class="plot-frame" id="plot0"></div>
+    </section>
+    <section class="card plot-card">
+      <div class="section-header"><div><h2>Różnica temperatur ΔT = Te − Tc</h2><p>Wartości liczone z przypisanych czujników.</p></div><div class="actions"><button class="button small" data-svg="1">SVG</button><button class="button small" data-png="1">PNG</button></div></div>
+      <div class="plot-frame" id="plot1"></div>
+    </section>
+    <section class="card plot-card">
+      <div class="section-header"><div><h2>Zadana moc grzania Q(t)</h2><p>Wyłącznie wartości wpisane przez użytkownika; nie estymacja z temperatur.</p></div><div class="actions"><button class="button small" data-svg="2">SVG</button><button class="button small" data-png="2">PNG</button></div></div>
+      <div class="plot-frame" id="plot2"></div>
+    </section>
+    <section class="card plot-card">
+      <div class="section-header"><div><h2>Parametr cieplny</h2><p>R<sub>app</sub> obliczane tylko przy Q &gt; 0; opcjonalnie R/R<sub>ref</sub>.</p></div><div class="actions"><select id="resistanceMode" aria-label="Parametr dolnego wykresu"><option value="r">R_app [K/W]</option><option value="rr">R/R_ref [−]</option></select><button class="button small" data-svg="3">SVG</button><button class="button small" data-png="3">PNG</button></div></div>
+      <div class="plot-frame" id="plot3"></div>
+    </section>
+
+    <section class="card methodology">
+      <h2>Jak interpretować wyniki</h2>
+      <p>Zmiany temperatury nie dowodzą bezpośrednio oscylacyjnego przepływu czynnika. R<sub>app</sub> wykorzystuje moc zadaną elektrycznie, nie pomiar rzeczywiście transportowanego strumienia ciepła. Przy Q = 0, nieznanej Q, brakujących danych lub niejednoznacznej konfiguracji nie wykonujemy pozornie precyzyjnych obliczeń. Szare strefy na wykresach oznaczają przerwy rejestracji, a nie stan pracy PHP.</p>
+      <p>Ta wersja obsługuje przegląd i obliczenia na podstawie wpisanego Q. Automatyczna detekcja epizodów przepływu i dopasowywanie mocy na podstawie temperatur <strong>nie są</strong> aktywne — potrzebują osobnej walidacji eksperymentalnej.</p>
+    </section>
+  </div>
+</main>
+<footer><span>3D PHP Analyzer · działa lokalnie w przeglądarce</span><span><a href="https://github.com/MateuszBock0/3DPHPanalyzer" target="_blank" rel="noopener noreferrer">Kod źródłowy na GitHub</a></span></footer>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
