@@ -30,6 +30,7 @@ from power_model import (PowerStage, calculate, validate, derive_estimated_perio
 from session_config import (export_configuration, validated_import,
                             LegacyConfigurationError)
 import methodology
+from episode_validation import resolved_q_label, review_all_k2
 
 
 def app_folder() -> Path:
@@ -228,7 +229,7 @@ class PHPDesktop(tk.Tk):
         top.pack(fill='both', expand=True, padx=8, pady=5)
         self.episode_tree = self._tree(top, [('id', 'Epizod', 75), ('kind', 'Typ', 180), ('start', 'Od [min]', 100),
                                               ('end', 'Do [min]', 100), ('delta', 'ΔT [K]', 110),
-                                              ('k2', 'Poprawa K2', 100), ('peaks', 'Ekstrema', 80)])
+                                              ('k2', 'K2 / wiarygodność', 270), ('peaks', 'Ekstrema', 80)])
         bottom = ttk.LabelFrame(frame, text='Szacowane zmiany grzania', padding=3)
         bottom.pack(fill='both', expand=True, padx=8, pady=5)
         self.onoff_tree = self._tree(bottom, [('kind', 'Rodzaj', 160), ('time', 'Czas [min]', 100),
@@ -260,11 +261,15 @@ class PHPDesktop(tk.Tk):
                   text='ON?/OFF? są estymowane z temperatur i nie potwierdzają stanu elektrycznego. '
                        'Wpisy ręczne nadpisują automatyczne Q; poza znanymi przedziałami Q pozostaje nieznane.',
                   style='Sub.TLabel', wraplength=900).pack(anchor='w', pady=(2, 8))
+        self.cooling_confirmed = tk.BooleanVar(value=False)
+        ttk.Checkbutton(body, variable=self.cooling_confirmed,
+            text='Potwierdzam z dziennika podobne warunki chłodzenia przed i w trakcie epizodów (założenie operatora)',
+            command=self.update_cooling).pack(anchor='w', pady=(2, 8))
         inferred = ttk.LabelFrame(body, text='Wykryte okresy ON? / OFF? (robocze)', padding=3)
         inferred.pack(fill='both', expand=True, pady=(0, 6))
         self.period_tree = self._tree(inferred,
             [('state', 'Stan?', 110), ('from', 'Od [min]', 100), ('to', 'Do [min]', 100),
-             ('q', 'Q z ustawień [W]', 145), ('note', 'Pochodzenie / uwagi', 300)],
+             ('q', 'Q wynikowa po nadpisaniach [W]', 245), ('note', 'Pochodzenie / uwagi', 300)],
             height=5)
         inferred_actions = ttk.Frame(body)
         inferred_actions.pack(fill='x', pady=(0, 8))
@@ -343,10 +348,12 @@ class PHPDesktop(tk.Tk):
             for key, value in restored.items():
                 row[key] = value
             self.reference_enabled.set(row['ref_enabled'])
+            self.cooling_confirmed.set(row['cooling_confirmed'])
             self.reference_from.set(f'{row["ref_start"]:g}')
             self.reference_to.set(f'{row["ref_end"]:g}')
-            self._render_power_tree()
             self._recalculate()
+            self._render_power_tree()
+            self._render_events()
             self.draw_plot()
             self.status.set('Wczytano konfigurację: ' + filename)
             messagebox.showinfo('Konfiguracja', 'Przywrócono Q, nadpisania i referencję R/Rref.')
@@ -397,6 +404,7 @@ class PHPDesktop(tk.Tk):
                     results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
                                     'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
                                     'effective_stages': [], 'ref_enabled': False,
+                                    'cooling_confirmed': False, 'k2_reviews': {},
                                     'ref_start': 0., 'ref_end': 10.})
                 except Exception as error:
                     problems.append(f'{record.name}: {error}')
@@ -445,10 +453,11 @@ class PHPDesktop(tk.Tk):
         self.active = int(idx[0])
         row = self.record_rows[self.active]
         self.reference_enabled.set(row['ref_enabled'])
+        self.cooling_confirmed.set(row['cooling_confirmed'])
         self.reference_from.set(str(row['ref_start']))
         self.reference_to.set(str(row['ref_end']))
-        self._render_power_tree()
         self._recalculate(notify=False)
+        self._render_power_tree()
         self._render_events()
         self.draw_plot()
 
@@ -554,17 +563,7 @@ class PHPDesktop(tk.Tk):
         row = self._get()
         self.period_tree.delete(*self.period_tree.get_children())
         for i, p in enumerate(row['periods']):
-            q = row['constant_q']
-            if q is None:
-                power = '— (nieznane)'
-            elif row['constant_scope'] == 'full':
-                power = f'{q:g} (cały plik)'
-            elif p.state == 'ON?':
-                power = f'{q:g} (założone)'
-            elif p.state == 'OFF?':
-                power = '0 (założone)'
-            else:
-                power = '— (nieznane)'
+            power = resolved_q_label(row['effective_stages'], p.start_min, p.end_min)
             manual = any(s.start_min < p.end_min and s.end_min > p.start_min for s in row['stages'])
             note = p.note + (' · ręcznie nadpisane' if manual else '')
             if p.state == 'P_UP?':
@@ -650,9 +649,20 @@ class PHPDesktop(tk.Tk):
             row['ref_enabled'] = self.reference_enabled.get()
             row['ref_start'], row['ref_end'] = start, end
             self._recalculate(notify=True)
+            self._render_power_tree()
+            self._render_events()
             self.draw_plot()
         except ValueError as e:
             messagebox.showerror('Okno referencyjne', str(e))
+
+    def update_cooling(self):
+        if self.active is None:
+            return
+        row = self._get()
+        row['cooling_confirmed'] = bool(self.cooling_confirmed.get())
+        self._recalculate()
+        self._render_events()
+        self.status.set('Zmieniono deklarację warunków chłodzenia; kwalifikacja K2 przeliczona.')
 
     def _recalculate(self, notify=False):
         row = self._get()
@@ -662,6 +672,7 @@ class PHPDesktop(tk.Tk):
         row['effective_stages'] = effective_stages(
             row['periods'], row['constant_q'], row['stages'], duration, row['constant_scope'])
         row['results'] = calculate(a.record.t, a.delta, row['effective_stages'], ref)
+        row['k2_reviews'] = review_all_k2(a, row['effective_stages'], row['cooling_confirmed'])
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')
@@ -685,14 +696,16 @@ class PHPDesktop(tk.Tk):
                 continue
             self.episode_tree.insert('', 'end', values=(ep.display_id, ep.kind,
                 f'{(ep.start-first)/60:.2f}', f'{(ep.end-first)/60:.2f}',
-                f'{ep.median_delta:.2f}', 'tak' if ep.k2 else 'nie', ep.peaks))
+                f'{ep.median_delta:.2f}', row['k2_reviews'][ep.display_id].label,
+                ep.peaks))
         for event in a.heating_events:
             self.onoff_tree.insert('', 'end', values=(event.kind.replace('HEATING_', '').replace('_EST', '?'),
                 f'{(event.time-first)/60:.2f}',
                 f'{(event.band_start-first)/60:.2f}' if event.band_start is not None else '—',
                 f'{(event.band_end-first)/60:.2f}' if event.band_end is not None else '—',
                 event.method))
-        self.notes.set('; '.join(a.notes) if a.notes else 'Brak ostrzeżeń. Metody detekcji stanowią kryteria robocze, nie pomiar przepływu.')
+        caution = 'K2 termiczne jest kandydatem; status zależy od stałej Q i deklaracji chłodzenia. Nie dowodzi przepływu PHP.'
+        self.notes.set(caution + '  ' + ('; '.join(a.notes) if a.notes else 'Brak ostrzeżeń.'))
 
     def draw_plot(self):
         for ax in self.axes: ax.clear()
@@ -810,6 +823,18 @@ class PHPDesktop(tk.Tk):
                      [[p.start_min, p.end_min, p.state, p.note] for p in row['periods']])
         self._writer(out/'nadpisania_Q.csv', ['od_min', 'do_min', 'Q_W'],
                      [[s.start_min, s.end_min, s.q_w] for s in row['stages']])
+        self._writer(out/'ocena_K2.csv',
+                     ['epizod', 'K2_termiczne', 'status', 'Q_stala_W', 'chlodzenie_zadeklarowane', 'wyjasnienie'],
+                     [[e.display_id, int(e.k2), assessment.code,
+                       '' if assessment.q_w is None else assessment.q_w,
+                       int(row['cooling_confirmed']), assessment.explanation]
+                      for e in a.episodes if e.oscillatory
+                      for assessment in [row['k2_reviews'][e.display_id]]])
+        self._writer(out/'Q_w_okresach_ON_OFF.csv',
+                     ['od_min', 'do_min', 'stan_szacowany', 'Q_wynikowa'],
+                     [[p.start_min, p.end_min, p.state,
+                       resolved_q_label(row['effective_stages'], p.start_min, p.end_min)]
+                      for p in row['periods']])
         config = export_configuration(row)
         (out/'konfiguracja.json').write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
 
@@ -870,11 +895,29 @@ class PHPDesktop(tk.Tk):
                         if r.heating_events else None)
                 idx[r.record.name] = (base+'/wykresy/'+base+'_analiza.png', zooms, diag)
             summary = engine.csv_summary(analyses)
-            events = engine.csv_episodes(analyses)
-            engine.write_csv(out/'wszystkie_epizody.csv', events,
-                             list(events[0]) if events else ['plik','epizod'])
-            engine.write_csv(out/'wszystkie_zdarzenia_termiczne.csv', events,
-                             list(events[0]) if events else ['plik','epizod'])
+            all_events = engine.csv_episodes(analyses)
+            episode_events = engine.csv_episodes(analyses, oscillatory_only=True)
+            assessment_lookup = {(row['record'].name, ep.display_id):
+                                 row['k2_reviews'][ep.display_id].code
+                                 for row in self.record_rows for ep in row['analysis'].episodes
+                                 if ep.oscillatory}
+            for event in all_events:
+                event['K2_weryfikacja_Q_chlodzenia'] = assessment_lookup.get(
+                    (event['plik'], event['epizod']), 'NIE_DOTYCZY')
+            for event in episode_events:
+                event['K2_weryfikacja_Q_chlodzenia'] = assessment_lookup.get(
+                    (event['plik'], event['epizod']), 'NIE_DOTYCZY')
+            for summary_row in summary:
+                key = summary_row['plik']
+                summary_row['K2_warunkowe_przy_Q_i_chlodzeniu'] = sum(
+                    review.code == 'K2_WARUNKOWE'
+                    for row in self.record_rows if row['record'].name == key
+                    for review in row['k2_reviews'].values())
+            engine.write_csv(out/'wszystkie_epizody.csv', episode_events,
+                             list(episode_events[0]) if episode_events else ['plik','epizod'])
+            engine.write_csv(out/'wszystkie_zdarzenia_termiczne.csv', all_events,
+                             list(all_events[0]) if all_events else ['plik','epizod'])
+            events = all_events
             heating = engine.csv_heating_events(analyses)
             engine.write_csv(out/'zmiany_grzania.csv', heating,
                              list(heating[0]) if heating else ['plik','rodzaj_zdarzenia'])
