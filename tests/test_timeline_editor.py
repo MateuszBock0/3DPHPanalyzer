@@ -163,7 +163,7 @@ class SessionTests(unittest.TestCase):
                ThermalSuggestion(8,'HEATING_OFF_EST','operator_added')]
         row=dict(self.row,thermal_suggestions=edits)
         cfg=export_configuration(row)
-        self.assertEqual(cfg['schema_version'],5)
+        self.assertEqual(cfg['schema_version'],6)
         restored=validated_import(cfg,row)
         self.assertEqual(restored['thermal_suggestions'],edits)
         self.assertEqual(restored['periods'][0].state,'UNKNOWN')
@@ -175,7 +175,7 @@ class SessionTests(unittest.TestCase):
 
     def test_json_roundtrip_for_markers(self):
         data=export_configuration(self.row)
-        self.assertEqual(data['schema_version'],5)
+        self.assertEqual(data['schema_version'],6)
         restored=validated_import(data,self.row)
         self.assertEqual(restored['timeline_events'],self.timeline)
         self.assertEqual(restored['effective_stages'],self.resolved)
