@@ -27,7 +27,10 @@ def export_configuration(row):
     r = row['record']
     result = row['results']
     return {
-        'schema_version': 5, 'filename': r.name, 'source': r.origin,
+        'schema_version': 6, 'filename': r.name, 'source': r.origin,
+        'calibration_enabled': bool(row.get('calibration_enabled',False)),
+        'exclude_tp4': bool(row.get('exclude_tp4',False)),
+        'selected_diary_point': row.get('selected_diary_point'),
         'source_identity': record_identity(r),
         'manual_overrides': [asdict(s) for s in row['stages']],
         'timeline_events': [asdict(s) for s in row.get('timeline_events', [])],
@@ -73,6 +76,23 @@ def validated_import(config, row, *, legacy_confirmed=False):
                 'Sprawdź ręcznie, czy to ten sam pomiar.')
     elif identity != record_identity(record):
         raise ValueError('Konfiguracja nie pasuje do próbek pomiarowych: różne czasy, temperatury lub liczba próbek.')
+    calibration_enabled=config.get('calibration_enabled',False)
+    exclude_tp4=config.get('exclude_tp4',False)
+    if type(calibration_enabled) is not bool or type(exclude_tp4) is not bool:
+        raise ValueError('Ustawienia kalibracji i TP4 muszą być true/false.')
+    selected_diary_point=config.get('selected_diary_point')
+    if selected_diary_point is not None:
+        if not isinstance(selected_diary_point,dict) or not all(
+            k in selected_diary_point for k in ('source','line','voltage_v','current_a','power_w')
+        ):
+            raise ValueError('Nieprawidłowy odczyt U/I z dziennika.')
+        if any(not math.isfinite(float(selected_diary_point[k]))
+               for k in ('voltage_v','current_a','power_w')):
+            raise ValueError('Nieskończone U/I/Q w dzienniku.')
+        if not math.isclose(float(selected_diary_point['voltage_v'])
+                            *float(selected_diary_point['current_a']),
+                            float(selected_diary_point['power_w']),rel_tol=1e-5,abs_tol=1e-7):
+            raise ValueError('W dzienniku Q musi odpowiadać U*I.')
     constant = config.get('constant_q_W')
     if constant is not None:
         constant = _number(constant, 'Q stałe')
@@ -145,7 +165,9 @@ def validated_import(config, row, *, legacy_confirmed=False):
                        tc=getattr(row['analysis'],'tc',None))
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
-    return {'stages': overrides, 'timeline_events': timeline,
+    return {'calibration_enabled':calibration_enabled,'exclude_tp4':exclude_tp4,
+            'selected_diary_point':selected_diary_point,
+            'stages': overrides, 'timeline_events': timeline,
             'thermal_suggestions': suggestions, 'periods': periods,
             'constant_q': constant, 'constant_scope': scope,
             'cooling_confirmed': cooling_confirmed,
