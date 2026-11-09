@@ -777,6 +777,53 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if folder:
             self._start_load([Path(folder)])
 
+    def load_power_diary(self):
+        """Operator selects a U/I journal entry; it NEVER becomes automatic ON."""
+        if self.active is None:
+            return messagebox.showinfo('Dziennik U/I',
+                'Najpierw wybierz eksperyment; wpis z dziennika należy zatwierdzić '
+                'jako Q i ręcznie przypisać do czasu ON/Q.')
+        filename=filedialog.askopenfilename(title='Dziennik drut — CSV Arkusz1',
+            filetypes=[('CSV z drut','*.csv'),('Wszystkie pliki','*.*')])
+        if not filename:
+            return
+        try:
+            points=read_diary(Path(filename).read_bytes(),Path(filename).name)
+        except (ValueError,OSError) as exc:
+            return messagebox.showerror('Dziennik U/I',str(exc),parent=self)
+        window=tk.Toplevel(self)
+        window.title('Dziennik drut — wybór punktu U i I')
+        window.geometry('790x460')
+        ttk.Label(window,text='Odczyty U/I z dziennika: wybierz jeden wiersz. '
+            'Godzina w arkuszu nie jest zsynchronizowana automatycznie z PicoLog.',
+            wraplength=740).pack(padx=12,pady=12)
+        columns=('line','time','u','i','q')
+        tree=ttk.Treeview(window,columns=columns,show='headings',height=13)
+        for col,title,width in [('line','Wiersz',80),('time','Godzina',100),
+                                ('u','U [V]',130),('i','I [A]',130),('q','Q=U×I [W]',160)]:
+            tree.heading(col,text=title)
+            tree.column(col,width=width)
+        tree.pack(fill='both',expand=True,padx=12,pady=5)
+        for index,point in enumerate(points):
+            tree.insert('','end',iid=str(index),values=(
+                point.line,point.time_label or '—',
+                f'{point.voltage_v:g}',f'{point.current_a:g}',f'{point.power_w:.4f}'))
+        def choose():
+            selected=tree.selection()
+            if not selected:
+                return messagebox.showwarning('Dziennik U/I',
+                                              'Zaznacz wiersz dziennika.',parent=window)
+            point=points[int(selected[0])]
+            self.editor_q_var.set(f'{point.power_w:.6g}')
+            self._get()['selected_diary_point']=asdict(point)
+            self._autosave_current()
+            self.tabs.select(self.chart_page)
+            self.status.set(f'Q={point.power_w:.4f} W przeniesiono z {point.source}, '
+                f'wiersz {point.line}. Zaznacz ON / Q ręcznie; czasu nie synchronizujemy.')
+            window.destroy()
+        ttk.Button(window,text='Przenieś Q=U×I do pola Q (nie ustawiaj ON)',
+                   command=choose,style='Accent.TButton').pack(pady=(7,13))
+
     def _start_load(self, paths):
         if self.busy:
             messagebox.showinfo('Analiza trwa', 'Zakończ bieżące zadanie przed dodaniem plików.')
@@ -1277,7 +1324,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         row = self._get(); a = row['analysis']; rec = row['record']; res = row['results']
         t0 = rec.t[0]
         ts = [(v-t0)/60 for v in rec.t]
-        series = [a.te, a.tm, a.tc, a.delta, a.delta_smooth]
+        series = [a.te,a.tm,a.tc,a.delta,a.delta_smooth,
+                  [q[4] for q in a.record.values],
+                  [q[5] for q in a.record.values]]
         ax, middle, bottom = self.axes
         modes = {'R pozorny [K/W]': ('r', COLOR['r'], 'R_app [K/W]'),
                  'R względny [-]': ('relative', COLOR['r'], 'R/Rref [−]'),
@@ -1293,10 +1342,22 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             idx0 = downsample_indices(ts[begin:end], [signal[begin:end] for signal in series])
             idx = [begin + i for i in idx0]
             X = [ts[i] for i in idx]
+            sensor_values=a.record.values
             if self.show_individual.get():
-                for pos, c in [(0, COLOR['ev']), (1, COLOR['ev']), (2, COLOR['middle']),
-                               (3, COLOR['middle']), (4, COLOR['co']), (5, COLOR['co'])]:
-                    ax.plot(X, [rec.values[i][pos] for i in idx], color=c, linewidth=.7, alpha=.3)
+                for pos,c in [(0,COLOR['ev']),(1,COLOR['ev']),
+                              (2,COLOR['middle']),(3,COLOR['middle'])]:
+                    if pos==2 and row.get('exclude_tp4',False):
+                        continue
+                    ax.plot(X,[sensor_values[i][pos] for i in idx],color=c,
+                            linewidth=.7,alpha=.3)
+            # Condenser sensors are always distinguishable: their difference
+            # can exceed 30C and an average Tc alone hides thermal gradients.
+            ax.plot(X,[sensor_values[i][4] for i in idx],
+                    color='#3b639d',linewidth=.9,ls='--',alpha=.75,
+                    label='TP6 skraplacz' if part==0 else '_nolegend_')
+            ax.plot(X,[sensor_values[i][5] for i in idx],
+                    color='#10a7a2',linewidth=.9,ls=':',alpha=.8,
+                    label='TP7 skraplacz' if part==0 else '_nolegend_')
             for signal, c, name in [(a.te, COLOR['ev'], 'Parownik ch1, ch3'),
                                     (a.tm, COLOR['middle'], 'Sekcja środkowa ch4, ch5'),
                                     (a.tc, COLOR['co'], 'Skraplacz ch6, ch7')]:
@@ -1512,7 +1573,11 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         clone_record=copy.copy(original)
         clone_record.name=alias
         clone_analysis=copy.copy(row['analysis'])
-        clone_analysis.record=clone_record
+        # Keep processed/calibrated channel values in reports even when the
+        # persistent sample identity is based on unchanged raw PicoLog CSV.
+        processed_copy=copy.copy(row['analysis'].record)
+        processed_copy.name=alias
+        clone_analysis.record=processed_copy
         return dict(row,record=clone_record,analysis=clone_analysis,
                     _original_row=row)
 
