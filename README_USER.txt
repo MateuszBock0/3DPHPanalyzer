@@ -89,3 +89,23 @@ Kliknij zielony O1/O2 na osi czasu lub podwojnie kliknij wiersz tabeli,
 aby powiekszyc ten epizod w zakladce Wykresy.
 Karty zmieniaja sie po edycji ON/OFF/Q. W eksporcie znajdziesz
 podsumowanie_eksperymentu.csv i epizody_podsumowanie.csv.
+
+
+KATALOG TESTS_NO_PCM / KOREKCJA TERMOPAR / DZIENNIK U/I
+----------------------------------------------------
+1) Otworz folder i wybierz TESTS_NO_PCM. Program sam szuka surowych
+   CSV PicoLog w podfolderach; nie analizuje katalogu Results ani
+   archiwow ZIP lezacych wewnatrz. ZIP mozesz otworzyc osobno.
+2) Dwa identyczne CSV nie beda liczone jako dwa niezalezne pomiary.
+3) Domyslnie dane SUROWE. Zaznacz "T idealna" dopiero po akceptacji
+   ekstrapolacji poza 20-105 stopni C. Korekcja z arkusza
+   zestawienie-wykresy, bez zmiany oryginalnych CSV.
+4) TP4 podejrzana? Zaznacz "Wyklucz TP4 z Tm". Wtedy Tm = TP5.
+   TP4 wciaz bedzie zachowana w pliku wynikowym.
+5) TP6 i TP7 na wykresie sa pokazane osobno. Ich duza roznica
+   oznacza gradient i/lub problem z umiejscowieniem czujnikow.
+6) Kliknij "Dziennik U/I (drut)", wybierz zapisane U i I, a program
+   obliczy Q=U*I i przepisze Q do pola grzania. Zdarzenia ON/OFF
+   MUSISZ potwierdzic recznie; dziennik nie synchronizuje czasu.
+7) Eksport obejmuje dane surowe i przeliczone oraz plik JSON ze
+   zrodlem i zakresem kalibracji. Sesja zapamietuje Twoje ustawienia.
