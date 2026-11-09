@@ -688,6 +688,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         buttons = ttk.Frame(body)
         buttons.pack(fill='x', pady=4)
         ttk.Button(buttons, text='+ Dodaj nadpisanie', command=self.add_stage).pack(side='left', padx=3)
+        ttk.Button(buttons,text='Dziennik U/I → Q…',
+                   command=self.add_power_from_diary).pack(side='left',padx=3)
         ttk.Button(buttons, text='Edytuj', command=self.edit_stage).pack(side='left', padx=3)
         ttk.Button(buttons, text='Usuń', command=self.delete_stage).pack(side='left', padx=3)
         ttk.Label(body, text='Odniesienie R/Rref: jeden ciągły odcinek [Od, Do) z Q > 0, bez luk',
@@ -1019,6 +1021,16 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if st:
             self._add_override(st)
 
+    @staticmethod
+    def _retain_matching_evidence(row):
+        # A later edit/delete of Q must invalidate previously linked U/I notes.
+        stages=row.get('stages',[])
+        row['power_evidence']=[
+            ev for ev in row.get('power_evidence',[])
+            if any(abs(st.start_min-ev['start_min'])<1e-6 and
+                   abs(st.end_min-ev['end_min'])<1e-6 and
+                   abs(st.q_w-ev['power_w'])<0.001 for st in stages)]
+
     def _add_override(self, stage):
         row = self._get()
         try:
@@ -1027,10 +1039,108 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 raise ValueError(f'Q kończy się poza rejestracją ({duration:.3f} min).')
             validate(row['stages'] + [stage])
         except ValueError as e:
-            return messagebox.showerror('Moc Q', str(e) + '\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
+            messagebox.showerror('Moc Q', str(e) +
+                '\\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
+            return False
         row['stages'].append(stage)
         self._render_power_tree()
         self.update_power()
+        return True
+
+    def add_power_from_diary(self):
+        """Select a POINT U/I value, then manually bind it to a CSV interval."""
+        if self.active is None:
+            return
+        target=self._get()
+        rawpath=Path(str(target['record'].origin).split(' / ')[0])
+        initial=rawpath.parent if rawpath.parent.exists() else Path.home()
+        choice=filedialog.askopenfilename(
+            title='Dziennik U/I drut(Arkusz1).csv',
+            initialdir=str(initial),
+            filetypes=[('Dziennik CSV','*.csv'),('Wszystkie pliki','*.*')])
+        if not choice:
+            return
+        try:
+            points=sensor_profiles.diary_power_points(Path(choice).read_bytes())
+        except OSError as exc:
+            return messagebox.showerror('Dziennik U/I',str(exc))
+        if not points:
+            return messagebox.showerror('Dziennik U/I','Nie znaleziono czytelnych par U/I. '
+                'To nie jest pomiar napięcia/prądu zsynchronizowany z PicoLog.')
+        dlg=tk.Toplevel(self)
+        dlg.title('Dziennik U/I — wybierz odczyt i okres pomiaru')
+        dlg.geometry('900x540')
+        dlg.transient(self)
+        dlg.grab_set()
+        ttk.Label(dlg,text='Wybierz wiersz dziennika. CZASY wpisz ręcznie w minutach '
+                           'od pierwszej próbki wybranego CSV.',
+                  wraplength=820).pack(anchor='w',padx=10,pady=8)
+        frame=ttk.Frame(dlg)
+        frame.pack(fill='both',expand=True,padx=10)
+        columns=('n','u','i','q','context')
+        tree=ttk.Treeview(frame,columns=columns,show='headings',height=13)
+        for col,heading,width in [('n','Wiersz',65),('u','U [V]',95),
+                                   ('i','I [A]',95),('q','U×I [W]',105),
+                                   ('context','Fragment dziennika',420)]:
+            tree.heading(col,text=heading)
+            tree.column(col,width=width,stretch=col=='context')
+        tree.pack(side='left',fill='both',expand=True)
+        scroll=ttk.Scrollbar(frame,orient='vertical',command=tree.yview)
+        scroll.pack(side='right',fill='y')
+        tree.configure(yscrollcommand=scroll.set)
+        for j,point in enumerate(points):
+            tree.insert('','end',iid=str(j),values=(
+                point.row_number,f'{point.voltage_v:g}',f'{point.current_a:g}',
+                f'{point.power_w:.3f}',point.context))
+        fields=ttk.Frame(dlg)
+        fields.pack(fill='x',padx=12,pady=9)
+        start=tk.StringVar(value='0')
+        end=tk.StringVar(value=f'{self._duration_min():.3f}')
+        note=tk.StringVar(value='punktowy odczyt U/I; okres grzania potwierdza operator')
+        for col,(label,value) in enumerate([
+            ('Od CSV [min]',start),('Do CSV [min]',end),('Uwagi',note)]):
+            ttk.Label(fields,text=label).grid(row=0,column=col,sticky='w',padx=5)
+            ttk.Entry(fields,textvariable=value,
+                width=12 if col<2 else 58).grid(row=1,column=col,padx=5,sticky='we')
+        ttk.Label(dlg,text='Q=U×I jest punktem z notatnika, NIE automatycznym '
+                           'pomiarem U/I ani mocą netto transportowaną przez PHP. '
+                           'Dziennik nie wyznacza sam ON/OFF.',
+                  wraplength=840).pack(anchor='w',padx=12,pady=5)
+        def apply():
+            chosen=tree.selection()
+            if not chosen:
+                messagebox.showinfo('Wybierz odczyt','Najpierw wskaż wiersz U/I.',parent=dlg)
+                return
+            point=points[int(chosen[0])]
+            try:
+                left=float(start.get().replace(',','.'))
+                right=float(end.get().replace(',','.'))
+                stage=PowerStage(left,right,point.power_w)
+                validate([stage])
+                if right>self._duration_min()+1e-8:
+                    raise ValueError('Etap wykracza poza koniec CSV.')
+                if validate(target['stages']+[stage]) is None:
+                    pass
+            except ValueError as exc:
+                messagebox.showerror('Błędny przedział',str(exc),parent=dlg)
+                return
+            dlg.destroy()
+            if self._add_override(stage):
+                target.setdefault('power_evidence',[]).append({
+                    'start_min':left,'end_min':right,
+                    'voltage_v':point.voltage_v,'current_a':point.current_a,
+                    'power_w':point.power_w,
+                    'source':Path(choice).name+f', wiersz {point.row_number}',
+                    'note':note.get()[:350]})
+                self._autosave_current()
+                self.status.set('Przypisano punkt U/I z dziennika do okresu. '
+                    'Jego granice są deklaracją operatora, nie logiem zasilacza.')
+        bar=ttk.Frame(dlg)
+        bar.pack(fill='x',padx=10,pady=9)
+        ttk.Button(bar,text='Dodaj Q do wskazanego okresu',
+                   command=apply,style='Accent.TButton').pack(side='left',padx=7)
+        ttk.Button(bar,text='Anuluj',command=dlg.destroy).pack(side='left',padx=7)
+        dlg.wait_window()
 
     def _render_power_tree(self):
         row = self._get()
@@ -1130,14 +1240,20 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             copy = stages.copy(); copy[i] = st
             try: validate(copy)
             except ValueError as e: return messagebox.showerror('Moc Q', str(e))
-            stages[i] = st; self._render_power_tree(); self.update_power()
+            stages[i] = st
+            self._retain_matching_evidence(self._get())
+            self._render_power_tree()
+            self.update_power()
 
     def delete_stage(self):
         if self.active is None:
             return
         sel = self.power_tree.selection()
         if sel:
-            self._get()['stages'].pop(int(sel[0])); self._render_power_tree(); self.update_power()
+            self._get()['stages'].pop(int(sel[0]))
+            self._retain_matching_evidence(self._get())
+            self._render_power_tree()
+            self.update_power()
 
     def update_power(self):
         if self.active is None:
@@ -1522,6 +1638,32 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
+        quality=row.get('sensor_quality') or sensor_profiles.quality_report(
+            row['_original_row']['record'] if '_original_row' in row else row['record'],
+            row.get('calibration_mode','raw'),
+            row.get('exclude_thermocouple4',False))
+        self._writer(folder/'kontrola_termopar.csv',
+            ['kanal','kalibracja','poza_20_105_liczba','probek',
+             'T4_odstajace','T6_T7_roznica_gt20K','T4_wykluczona'],
+            [[ch,quality.calibration_mode,dict(quality.extrapolated)[ch],
+              quality.total_samples,quality.ch4_outliers,
+              quality.condenser_disagreement,int(quality.ch4_excluded)]
+             for ch in sensor_profiles.CHANNELS])
+        if row.get('calibration_mode')=='corrected':
+            source=row.get('_original_row',row)['record']
+            corrected=row['analysis'].record
+            names=[f'T{ch}' for ch in sensor_profiles.CHANNELS]
+            self._writer(folder/'termopary_raw_vs_corrected.csv',
+                ['czas_min_od_CSV']+[f'{n}_raw_C' for n in names]
+                +[f'{n}_corrected_C' for n in names],
+                [[f'{(t-source.t[0])/60:.4f}']+
+                 [f'{v:.5f}' for v in raw]+[f'{v:.5f}' for v in cor]
+                 for t,raw,cor in zip(source.t,source.values,corrected.values)])
+        self._writer(folder/'zrodla_Q_z_dziennika.csv',
+            ['od_min','do_min','U_V','I_A','Q_UI_W','zrodlo','uwagi'],
+            [[e['start_min'],e['end_min'],e['voltage_v'],e['current_a'],
+              e['power_w'],e['source'],e['note']]
+             for e in row.get('power_evidence',[])])
         overview=build_experiment_summary(row)
         self._writer(folder/'podsumowanie_eksperymentu.csv',
                      ['plik','czas_zapisu_min','liczba_epizodow_O',
