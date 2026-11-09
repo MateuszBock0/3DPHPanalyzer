@@ -152,3 +152,14 @@ Po wybraniu pomiaru CSV program **automatycznie otwiera Podsumowanie** z kartami
 **Ważne metodologicznie:** ON wpisany przez operatora ma pierwszeństwo przed ON? oszacowanym z temperatury; OFF kasuje wcześniejszy początek grzania. Brak wiarygodnego ON oznacza brak czasu rozruchu od ON; początek CSV nie jest traktowany jako włączenie grzałki. Wynik to **czas do pierwszego wykrytego O1**, nie dowód ruchu dwufazowego. Q jest ręcznie przypisana przez operatora, ponieważ aparatura nie rejestruje U ani I; przy zmianie Q w trakcie O1 nie wyznaczamy pojedynczej wartości R_app dla tego epizodu.
 
 Karty przeliczane są po edycji ON/OFF/Q i deklaracji chłodzenia. Eksport wybranego i całości zawiera `podsumowanie_eksperymentu.csv` oraz `epizody_podsumowanie.csv`; raport HTML do nich odsyła. Metryki pochodzą z tego samego silnika K1/K2 i modelu Q, co pozostałe zakładki, bez dodatkowego detektora.
+
+
+## Import TESTS_NO_PCM, jakość termopar i dziennik U/I (9 listopada 2026)
+
+Zobacz **[README_TESTS_NO_PCM.md](README_TESTS_NO_PCM.md)** — procedura pracy z rzeczywistym folderem `TESTS_NO_PCM`. `Otwórz folder` wczytuje rekurencyjnie źródłowe CSV PicoLog (także z ZIP), pomija `Results` i `PHP_Results`, nie odczytuje arkuszy `drut` i `zestawienie-wykresy` jako pomiarów; unika identycznych i prefiksowych fragmentów CSV. Bez usuwania i przenoszenia surowych danych.
+
+**Kalibracja:** w `Wykresy` można wybrać `Surowe` (domyślnie) lub `Skorygowane`. Reguły `T_corr = a*T_raw+b` dla kanałów 1/3/4/5/6/7 pochodzą z dostarczonego CSV `zestawienie-wykresy(Arkusz1)`; punkty dopasowania obejmują **20–105°C**. Korekta poza tym zakresem jest **ekstrapolacją**. Przełącznik `Wyklucz T4 z Tm` sprawia, że Tm reprezentuje **tylko pomiar T5**, nie uzupełnienie T4. Widoczne są rozbieżności T6/T7. Tryb zapisywany jest w konfiguracji v6 i sesji; oryginalne próbki są nienaruszone.
+
+**Moc z dziennika:** `Moc Q / R` → `Dziennik U/I → Q…`. Program pokazuje odczytane punktowe U/I i liczy U×I, ale to operator musi wybrać właściwy wiersz i przedział czasowy w minutach od początku CSV. Moc U×I nie jest pomiarem netto mocy doprowadzonej do czynnika. Eksport zawiera `zrodla_Q_z_dziennika.csv` i raport QA.
+
+**Nie zmieniono zasad K1/K2:** termiczne ON?/OFF? nie są elektrycznymi znacznikami przełączeń. Brak synchronizacji U/I z PicoLog — moc pozostaje informacją podaną przez operatora. Trzeba ostrożnie porównywać próbki 3.11 z wodą i bez wody.

@@ -9,6 +9,7 @@ from timeline_editor import (Transition, validate_transitions, resolve_schedule,
                              ThermalSuggestion, validate_suggestions, suggested_heating_events)
 from power_model import derive_estimated_periods
 import php_analyzer as engine
+import sensor_profiles
 
 class LegacyConfigurationError(ValueError):
     """Older configuration cannot be verified automatically."""
@@ -27,9 +28,14 @@ def export_configuration(row):
     r = row['record']
     result = row['results']
     return {
-        'schema_version': 5, 'filename': r.name, 'source': r.origin,
+        'schema_version': 6, 'filename': r.name, 'source': r.origin,
         'source_identity': record_identity(r),
         'manual_overrides': [asdict(s) for s in row['stages']],
+        'calibration_mode': row.get('calibration_mode','raw'),
+        'exclude_thermocouple4': bool(row.get('exclude_thermocouple4',False)),
+        'calibration_source': ('zestawienie-wykresy(Arkusz1).csv: '
+            'T_corr=a*T_raw+b, 20–105 °C fit range'),
+        'power_evidence': list(row.get('power_evidence',[])),
         'timeline_events': [asdict(s) for s in row.get('timeline_events', [])],
         **({'thermal_suggestions':[asdict(s) for s in row['thermal_suggestions']]}
            if 'thermal_suggestions' in row else {}),
@@ -63,6 +69,15 @@ def validated_import(config, row, *, legacy_confirmed=False):
     if not isinstance(config, dict):
         raise ValueError('Konfiguracja JSON musi być obiektem.')
     record = row['record']
+    mode=config.get('calibration_mode','raw')
+    if mode not in sensor_profiles.MODES:
+        raise ValueError('Nieznany tryb kalibracji termopar.')
+    exclude4=config.get('exclude_thermocouple4',False)
+    if type(exclude4) is not bool:
+        raise ValueError('exclude_thermocouple4 musi być true/false.')
+    evidence=config.get('power_evidence',[])
+    if not isinstance(evidence,list) or len(evidence)>1000:
+        raise ValueError('power_evidence musi być listą.')
     if config.get('filename') != record.name:
         raise ValueError(f'Inny plik: konfiguracja dotyczy {config.get("filename")!r}, a wybrano {record.name!r}.')
     identity = config.get('source_identity')
@@ -97,6 +112,27 @@ def validated_import(config, row, *, legacy_confirmed=False):
             _number(stage.get('q_w'), f'Q {i+1}')))
     overrides = validate(overrides)
     duration = (record.t[-1] - record.t[0]) / 60
+    validated_evidence=[]
+    for entry in evidence:
+        if not isinstance(entry,dict):
+            raise ValueError('Pochodzenie Q musi być obiektem.')
+        start_e=_number(entry.get('start_min'),'Q z dziennika od')
+        end_e=_number(entry.get('end_min'),'Q z dziennika do')
+        voltage=_number(entry.get('voltage_v'),'Napięcie z dziennika')
+        current=_number(entry.get('current_a'),'Prąd z dziennika')
+        power=sensor_profiles.voltage_current_power(voltage,current)
+        if start_e<0 or end_e<=start_e or end_e>duration+1e-7:
+            raise ValueError('Etap z dziennika wykracza poza zakres CSV.')
+        if not any(abs(st.start_min-start_e)<1e-6 and
+                   abs(st.end_min-end_e)<1e-6 and
+                   abs(st.q_w-power)<0.001 for st in overrides):
+            raise ValueError('Wpis U/I nie ma zgodnego ręcznego przedziału Q.')
+        validated_evidence.append(dict(
+            start_min=start_e,end_min=end_e,voltage_v=voltage,
+            current_a=current,power_w=power,
+            source=str(entry.get('source','dziennik U/I'))[:250],
+            note=str(entry.get('note',''))[:350]))
+
     if any(stage.end_min > duration + 1e-8 for stage in overrides):
         raise ValueError('Nadpisanie Q wykracza poza czas pomiaru.')
     raw_events = config.get('timeline_events', [])
@@ -139,13 +175,21 @@ def validated_import(config, row, *, legacy_confirmed=False):
     if start < 0 or end <= start or (enabled and end > duration + 1e-9):
         raise ValueError('Niepoprawne okno referencji.')
     resolved = resolve_schedule(periods, constant, overrides, duration, scope, timeline)
-    result = calculate(record.t, row['analysis'].delta, resolved,
+    analysis=engine.analyze(
+        sensor_profiles.process_record(record,mode),
+        exclude_thermocouple4=exclude4)
+    quality=sensor_profiles.quality_report(record,mode,exclude4)
+    analysis.notes.extend(quality.notes())
+    result = calculate(record.t, analysis.delta, resolved,
                        (start, end) if enabled else None,
-                       te=getattr(row['analysis'],'te',None),
-                       tc=getattr(row['analysis'],'tc',None))
+                       te=analysis.te, tc=analysis.tc)
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'stages': overrides, 'timeline_events': timeline,
+            'analysis': analysis,
+            'sensor_quality': quality, 'calibration_mode':mode,
+            'exclude_thermocouple4':exclude4,
+            'power_evidence':validated_evidence,
             'thermal_suggestions': suggestions, 'periods': periods,
             'constant_q': constant, 'constant_scope': scope,
             'cooling_confirmed': cooling_confirmed,

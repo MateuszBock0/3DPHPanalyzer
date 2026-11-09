@@ -42,6 +42,9 @@ from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
 from activity_assessment import assess_all
 from experiment_summary import build_experiment_summary
+import sensor_profiles
+import dataset_catalog
+import experiment_comparison as comparison
 
 
 def app_folder() -> Path:
@@ -61,25 +64,8 @@ def path_safe(s):
 
 
 def input_files(path: Path):
-    """Read explicitly selected files/folder; don't accidentally ingest exports."""
-    output = []
-    if path.is_dir():
-        files = sorted(p for p in path.rglob('*') if p.is_file() and
-                       'results' not in [x.lower() for x in p.relative_to(path).parts])
-    else:
-        files = [path]
-    for file in files:
-        if file.suffix.lower() == '.csv':
-            output.append((file.name, str(file), file.read_bytes()))
-        elif file.suffix.lower() == '.zip':
-            with zipfile.ZipFile(file) as z:
-                for entry in z.infolist():
-                    if entry.is_dir() or not entry.filename.lower().endswith('.csv'):
-                        continue
-                    if '__macosx' in entry.filename.lower() or '/results/' in '/' + entry.filename.lower():
-                        continue
-                    output.append((Path(entry.filename).name, f'{file.name} / {entry.filename}', z.read(entry)))
-    return output
+    """Scan TESTS_NO_PCM without converting notes or old Results to tests."""
+    return dataset_catalog.input_files(path)
 
 
 def downsample_indices(t, series, max_buckets=1700):
@@ -121,6 +107,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._drag_suggestion_index = None
         self._suggestion_line_artists = {}
         self._last_plot_record = None
+        self._last_scan_root = None
         self._poll_after_id = None
         self._first_q_after_id = None
         self._drag_lines = []
@@ -200,18 +187,21 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.tabs = ttk.Notebook(main)
         self.tabs.pack(fill='both', expand=True)
         self.summary_page = ttk.Frame(self.tabs)
+        self.comparison_page = ttk.Frame(self.tabs)
         self.chart_page = ttk.Frame(self.tabs)
         self.events_page = ttk.Frame(self.tabs)
         self.diagnosis_page = ttk.Frame(self.tabs)
         self.power_page = ttk.Frame(self.tabs)
         self.help_page = ttk.Frame(self.tabs)
         self.tabs.add(self.summary_page, text='Podsumowanie')
+        self.tabs.add(self.comparison_page, text='Porównanie')
         self.tabs.add(self.chart_page, text='Wykresy')
         self.tabs.add(self.events_page, text='Epizody / ON? OFF?')
         self.tabs.add(self.diagnosis_page, text='Czy PHP pracuje?')
         self.tabs.add(self.power_page, text='Moc Q / R')
         self.tabs.add(self.help_page, text='Metodyka i obliczenia')
         self._build_summary_page()
+        self._build_comparison_page()
         self._build_chart_page()
         self._build_events_page()
         self._build_diagnosis_page()
@@ -222,6 +212,128 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.progress = ttk.Progressbar(foot, mode='determinate', length=150)
         self.progress.pack(side='right')
         ttk.Label(foot, textvariable=self.status, style='Sub.TLabel').pack(side='left', fill='x', expand=True)
+
+    def _build_comparison_page(self):
+        root=ttk.Frame(self.comparison_page)
+        root.pack(fill='both',expand=True,padx=10,pady=8)
+        ttk.Label(root,text='Porównanie odpowiedzi termicznej — bez automatycznego '
+            'uznawania prób za równoważne',style='Heading.TLabel').pack(anchor='w')
+        controls=ttk.Frame(root)
+        controls.pack(fill='x',pady=(7,5))
+        ttk.Label(controls,text='Wielkość:').pack(side='left')
+        self.comparison_metric=tk.StringVar(value='ΔT [K]')
+        ttk.Combobox(controls,textvariable=self.comparison_metric,state='readonly',
+                     values=comparison.METRICS,width=17).pack(side='left',padx=5)
+        ttk.Label(controls,text='Wyrównaj:').pack(side='left',padx=(10,3))
+        self.comparison_alignment=tk.StringVar(value='csv')
+        ttk.Combobox(controls,textvariable=self.comparison_alignment,state='readonly',
+                     width=26,values=['csv','on','on_estimate']).pack(side='left',padx=4)
+        ttk.Button(controls,text='Porównaj zaznaczone',
+                   command=self._draw_comparison).pack(side='left',padx=8)
+        ttk.Button(controls,text='Zapisz wykres PNG',
+                   command=self._save_comparison).pack(side='left',padx=4)
+        ttk.Label(root,text='Wybierz 2–8 wierszy (Ctrl/Shift). Wyrównanie: '
+            'csv = start pliku, on = ręczne ON, on_estimate = ON? tam, '
+            'gdzie brak ręcznego ON. Nie łącz plików będących prefiksami.',
+            style='Sub.TLabel',wraplength=980).pack(anchor='w',pady=(0,4))
+        list_frame=ttk.Frame(root)
+        list_frame.pack(fill='x',pady=3)
+        self.comparison_tree=ttk.Treeview(list_frame,show='headings',
+            columns=('name','q','mode','cooling'),selectmode='extended',height=5)
+        for key,title,width in [('name','CSV / eksperyment',360),
+                                ('q','Przypisana moc Q [W]',190),
+                                ('mode','Termopary',120),
+                                ('cooling','Chłodzenie',140)]:
+            self.comparison_tree.heading(key,text=title)
+            self.comparison_tree.column(key,width=width,stretch=key=='name')
+        self.comparison_tree.pack(fill='x',expand=True)
+        self.comparison_warning=tk.StringVar(value='Wczytaj kilka eksperymentów '
+            'i zaznacz co najmniej dwa.')
+        ttk.Label(root,textvariable=self.comparison_warning,style='Sub.TLabel',
+                  wraplength=1040,justify='left').pack(fill='x',pady=5)
+        self.comparison_figure=Figure(figsize=(10,6),dpi=100,facecolor='white')
+        self.comparison_ax=self.comparison_figure.add_subplot(111)
+        self.comparison_canvas=FigureCanvasTkAgg(
+            self.comparison_figure,master=root)
+        self.comparison_canvas.get_tk_widget().pack(fill='both',expand=True)
+        self.comparison_ax.set_xlabel('Czas od początku CSV [min]')
+        self.comparison_ax.set_ylabel('ΔT [K]')
+        self.comparison_ax.grid(alpha=.22)
+        self.comparison_canvas.draw_idle()
+
+    def _refresh_comparison(self):
+        if not hasattr(self,'comparison_tree'):
+            return
+        selected=set(self.comparison_tree.selection())
+        self.comparison_tree.delete(*self.comparison_tree.get_children())
+        for i,row in enumerate(self.record_rows):
+            levels=comparison.power_levels(row)
+            leveltext=' / '.join(f'{q:g}' for q in levels) if levels else 'nieznana'
+            self.comparison_tree.insert('','end',iid=str(i),values=(
+                row['record'].name,leveltext,
+                row.get('calibration_mode','raw'),
+                'potwierdzone' if row.get('cooling_confirmed') else 'niepotwierdzone'))
+        for ident in selected:
+            if ident in self.comparison_tree.get_children():
+                self.comparison_tree.selection_add(ident)
+
+    def _draw_comparison(self):
+        indexes=sorted(int(x) for x in self.comparison_tree.selection())
+        if not 2<=len(indexes)<=8:
+            messagebox.showinfo('Porównanie','Wybierz od 2 do 8 pomiarów '
+                                'z tabeli (Ctrl/Shift).',parent=self)
+            return
+        rows=[self.record_rows[i] for i in indexes]
+        mode=self.comparison_alignment.get()
+        metric=self.comparison_metric.get()
+        self.comparison_ax.clear()
+        messages=comparison.suitability_warnings(rows,mode)
+        drawn=0
+        for row in rows:
+            origin,label=comparison.anchor_seconds(row,mode)
+            if origin is None:
+                messages.append(row['record'].name+': pominięto (brak ON).')
+                continue
+            record=row['record']
+            values=comparison.series_for(row,metric)
+            segments,gaps=engine.recording_segments(record.t)
+            for part,(begin,end) in enumerate(segments):
+                xs=[(v-origin)/60 for v in record.t[begin:end]]
+                ys=[v if v is not None and math.isfinite(v) else float('nan')
+                    for v in values[begin:end]]
+                if not xs:
+                    continue
+                use=downsample_indices(xs,[ys])
+                x=[xs[i] for i in use]
+                y=[ys[i] for i in use]
+                caption=(record.name+' · '+row.get('calibration_mode','raw')+
+                         ' · '+label)
+                self.comparison_ax.plot(x,y,lw=1.3,
+                    label=caption if part==0 else '_nolegend_')
+            drawn+=1
+        if mode!='csv':
+            self.comparison_ax.axvline(0,color='#5a6f85',ls='--',lw=1)
+        self.comparison_ax.grid(alpha=.25)
+        self.comparison_ax.set_xlabel(
+            'Czas od początku CSV [min]' if mode=='csv'
+            else 'Czas względem ON / ON? [min]')
+        self.comparison_ax.set_ylabel(metric)
+        if drawn:
+            self.comparison_ax.legend(loc='best',fontsize=7)
+        if not messages:
+            messages=['Q i warunki chłodzenia są oznaczone jako porównywalne '
+                      'przez operatora, ale nadal należy sprawdzić montaż termopar.']
+        self.comparison_warning.set('UWAGI: '+' | '.join(messages))
+        self.comparison_figure.tight_layout()
+        self.comparison_canvas.draw_idle()
+
+    def _save_comparison(self):
+        where=filedialog.asksaveasfilename(
+            title='Eksport porównania',defaultextension='.png',
+            filetypes=[('PNG','*.png')])
+        if where:
+            self.comparison_figure.savefig(where,dpi=180,
+                                           bbox_inches='tight',facecolor='white')
 
     def _build_summary_page(self):
         """One CSV, one conservative summary; never a second K1/K2 detector."""
@@ -294,8 +406,13 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         view=build_experiment_summary(row)
         row['summary_overview']=view
         self.summary_filename.set(view.filename)
+        qa=row.get('sensor_quality')
+        qa_text=(' ·  T4 wykl.: TAK' if qa is not None and qa.ch4_excluded else '')
+        if qa is not None and qa.condenser_disagreement:
+            qa_text+=f' ·  T6/T7 >20K: {qa.condenser_disagreement}/{qa.total_samples}'
         self.summary_subtitle.set(
             f'Czas zapisu: {view.duration_min:.2f} min   ·   '
+            f'Temperatury: {row.get("calibration_mode","raw")} {qa_text}   ·   '
             f'Liczba O1/O2: {view.count}   ·   '
             f'Chłodzenie porównywalne wg operatora: {"TAK" if view.cooling_confirmed else "niepotwierdzone"}'
             '   ·   Oscylacje temperatur nie dowodzą ruchu czynnika.')
@@ -458,6 +575,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                      values=['R pozorny [K/W]', 'R względny [-]', 'R proxy ΔT/ΔTref', 'Aktywność RMS [°C]', 'Q [W]']
                      ).pack(side='left', padx=9)
         self.panel_var.trace_add('write', lambda *_: self.draw_plot())
+        self.sensor_mode=tk.StringVar(value='raw')
+        self.exclude_t4=tk.BooleanVar(value=False)
         self.show_individual = tk.BooleanVar(value=True)
         ttk.Checkbutton(controls, text='Termopary pojedyncze', variable=self.show_individual,
                         command=self.draw_plot).pack(side='left', padx=10)
@@ -465,6 +584,20 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         ttk.Checkbutton(controls, text='Szacowane ON?/OFF?', variable=self.show_estimated,
                         command=self.draw_plot).pack(side='left', padx=10)
         ttk.Button(controls, text='Zapisz PNG/SVG', command=self.save_chart).pack(side='right')
+        sensorbar=ttk.Frame(self.chart_page)
+        sensorbar.pack(fill='x',padx=12,pady=(0,3))
+        ttk.Label(sensorbar,text='Termopary:').pack(side='left')
+        ttk.Radiobutton(sensorbar,text='Surowe',variable=self.sensor_mode,
+                        value='raw',command=self.update_sensors).pack(side='left',padx=6)
+        ttk.Radiobutton(sensorbar,text='Skorygowane (kalibracja 20–105°C)',
+                        variable=self.sensor_mode,value='corrected',
+                        command=self.update_sensors).pack(side='left',padx=6)
+        ttk.Checkbutton(sensorbar,text='Wyklucz T4 z Tm (Tm = T5)',
+                        variable=self.exclude_t4,
+                        command=self.update_sensors).pack(side='left',padx=8)
+        self.sensor_info=tk.StringVar(value='Korekta wyłączona; wartości PicoLog są surowe.')
+        ttk.Label(self.chart_page,textvariable=self.sensor_info,
+                  style='Sub.TLabel',wraplength=920).pack(fill='x',padx=14,pady=(0,2))
         ttk.Button(top, text='Ustaw stałe Q…', command=self.set_constant_q,
                    style='Accent.TButton').pack(side='left', padx=(0, 12))
         editor = ttk.Frame(self.chart_page)
@@ -686,6 +819,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         buttons = ttk.Frame(body)
         buttons.pack(fill='x', pady=4)
         ttk.Button(buttons, text='+ Dodaj nadpisanie', command=self.add_stage).pack(side='left', padx=3)
+        ttk.Button(buttons,text='Dziennik U/I → Q…',
+                   command=self.add_power_from_diary).pack(side='left',padx=3)
         ttk.Button(buttons, text='Edytuj', command=self.edit_stage).pack(side='left', padx=3)
         ttk.Button(buttons, text='Usuń', command=self.delete_stage).pack(side='left', padx=3)
         ttk.Label(body, text='Odniesienie R/Rref: jeden ciągły odcinek [Od, Do) z Q > 0, bez luk',
@@ -750,6 +885,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 row[key] = value
             self.reference_enabled.set(row['ref_enabled'])
             self.cooling_confirmed.set(row['cooling_confirmed'])
+            self.sensor_mode.set(row.get('calibration_mode','raw'))
+            self.exclude_t4.set(row.get('exclude_thermocouple4',False))
             self.reference_from.set(f'{row["ref_start"]:g}')
             self.reference_to.set(f'{row["ref_end"]:g}')
             self._recalculate()
@@ -795,6 +932,15 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             if not raw:
                 raise ValueError('Nie znaleziono CSV w wybranych plikach ani folderach.')
             records, problems = engine.unique_records(raw)
+            # Do not double-count prefix exports as independent experiments.
+            kept=[]
+            for record in records:
+                if record.fragment_of:
+                    problems.append(f'{record.name}: fragment pliku {record.fragment_of}; '
+                                    'pominięto duplikat części zapisu.')
+                else:
+                    kept.append(record)
+            records=kept
             if not records:
                 raise ValueError('Nie znaleziono poprawnych danych PicoLog.\n' + '\n'.join(problems[:8]))
             results = []
@@ -812,6 +958,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                                     'cooling_confirmed': False, 'k2_reviews': {}, 'activity_assessments': {},
                                     'timeline_events': [], 'thermal_suggestions': suggestions,
                                     'undo_events': [], 'undo_history': [], 'session_restored': False,
+                                    'calibration_mode':'raw','exclude_thermocouple4':False,
+                                    'power_evidence':[],
                                     'ref_start': 0., 'ref_end': 10.})
                     row = results[-1]
                     try:
@@ -841,6 +989,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                         self.listbox.insert('end', r['record'].name)
                         added += 1
                     self._set_busy(False)
+                    self._refresh_comparison()
                     if self.record_rows:
                         self.listbox.select_clear(0, 'end')
                         self.listbox.select_set(len(self.record_rows) - 1)
@@ -867,6 +1016,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         row = self.record_rows[self.active]
         self.reference_enabled.set(row['ref_enabled'])
         self.cooling_confirmed.set(row['cooling_confirmed'])
+        self.sensor_mode.set(row.get('calibration_mode','raw'))
+        self.exclude_t4.set(row.get('exclude_thermocouple4',False))
         self.reference_from.set(str(row['ref_start']))
         self.reference_to.set(str(row['ref_end']))
         self._recalculate(notify=False)
@@ -885,6 +1036,40 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if self.active is None:
             raise ValueError('Najpierw wczytaj i wybierz pomiar.')
         return self.record_rows[self.active]
+
+    def update_sensors(self):
+        """Reanalyse from the unmodified PicoLog record; never compound fits."""
+        if self.active is None or self.busy:
+            return
+        row=self._get()
+        mode=self.sensor_mode.get()
+        excluded=self.exclude_t4.get()
+        if (row.get('calibration_mode','raw')==mode and
+                row.get('exclude_thermocouple4',False)==excluded):
+            return
+        row['calibration_mode']=mode
+        row['exclude_thermocouple4']=excluded
+        processed=sensor_profiles.process_record(row['record'],mode)
+        analysis=engine.analyze(processed,exclude_thermocouple4=excluded)
+        quality=sensor_profiles.quality_report(row['record'],mode,excluded)
+        analysis.notes.extend(quality.notes())
+        old_suggestions=row.get('thermal_suggestions',[])
+        row['analysis']=analysis
+        row['sensor_quality']=quality
+        # Honor user-adjusted ON?/OFF? boundaries. Purely automatic markers
+        # may safely be refreshed when the signal is recalibrated.
+        if not any(m.source!='automatic' for m in old_suggestions):
+            row['thermal_suggestions']=initial_suggestions(
+                analysis.heating_events,processed.t[0],
+                (processed.t[-1]-processed.t[0])/60)
+        self._recalculate(notify=True)
+        self._render_events()
+        self._render_diagnosis()
+        self._render_power_tree()
+        self.draw_plot()
+        self._autosave_current()
+        self.status.set('Przeliczono analizę od surowego CSV; '
+                        'zmiany termopar zapisano w konfiguracji.')
 
     def _prompt_first_q(self):
         """Keep the summary visible; Q entry is always available on the chart."""
@@ -970,6 +1155,16 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if st:
             self._add_override(st)
 
+    @staticmethod
+    def _retain_matching_evidence(row):
+        # A later edit/delete of Q must invalidate previously linked U/I notes.
+        stages=row.get('stages',[])
+        row['power_evidence']=[
+            ev for ev in row.get('power_evidence',[])
+            if any(abs(st.start_min-ev['start_min'])<1e-6 and
+                   abs(st.end_min-ev['end_min'])<1e-6 and
+                   abs(st.q_w-ev['power_w'])<0.001 for st in stages)]
+
     def _add_override(self, stage):
         row = self._get()
         try:
@@ -978,10 +1173,107 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 raise ValueError(f'Q kończy się poza rejestracją ({duration:.3f} min).')
             validate(row['stages'] + [stage])
         except ValueError as e:
-            return messagebox.showerror('Moc Q', str(e) + '\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
+            messagebox.showerror('Moc Q', str(e) +
+                '\\nJeśli to korekta istniejącego wpisu ręcznego, użyj „Edytuj”.')
+            return False
         row['stages'].append(stage)
         self._render_power_tree()
         self.update_power()
+        return True
+
+    def add_power_from_diary(self):
+        """Select a POINT U/I value, then manually bind it to a CSV interval."""
+        if self.active is None:
+            return
+        target=self._get()
+        rawpath=Path(str(target['record'].origin).split(' / ')[0])
+        initial=rawpath.parent if rawpath.parent.exists() else Path.home()
+        choice=filedialog.askopenfilename(
+            title='Dziennik U/I drut(Arkusz1).csv',
+            initialdir=str(initial),
+            filetypes=[('Dziennik CSV','*.csv'),('Wszystkie pliki','*.*')])
+        if not choice:
+            return
+        try:
+            points=sensor_profiles.diary_power_points(Path(choice).read_bytes())
+        except OSError as exc:
+            return messagebox.showerror('Dziennik U/I',str(exc))
+        if not points:
+            return messagebox.showerror('Dziennik U/I','Nie znaleziono czytelnych par U/I. '
+                'To nie jest pomiar napięcia/prądu zsynchronizowany z PicoLog.')
+        dlg=tk.Toplevel(self)
+        dlg.title('Dziennik U/I — wybierz odczyt i okres pomiaru')
+        dlg.geometry('900x540')
+        dlg.transient(self)
+        dlg.grab_set()
+        ttk.Label(dlg,text='Wybierz wiersz dziennika. CZASY wpisz ręcznie w minutach '
+                           'od pierwszej próbki wybranego CSV.',
+                  wraplength=820).pack(anchor='w',padx=10,pady=8)
+        frame=ttk.Frame(dlg)
+        frame.pack(fill='both',expand=True,padx=10)
+        columns=('n','u','i','q','context')
+        tree=ttk.Treeview(frame,columns=columns,show='headings',height=13)
+        for col,heading,width in [('n','Wiersz',65),('u','U [V]',95),
+                                   ('i','I [A]',95),('q','U×I [W]',105),
+                                   ('context','Fragment dziennika',420)]:
+            tree.heading(col,text=heading)
+            tree.column(col,width=width,stretch=col=='context')
+        tree.pack(side='left',fill='both',expand=True)
+        scroll=ttk.Scrollbar(frame,orient='vertical',command=tree.yview)
+        scroll.pack(side='right',fill='y')
+        tree.configure(yscrollcommand=scroll.set)
+        for j,point in enumerate(points):
+            tree.insert('','end',iid=str(j),values=(
+                point.row_number,f'{point.voltage_v:g}',f'{point.current_a:g}',
+                f'{point.power_w:.3f}',point.context))
+        fields=ttk.Frame(dlg)
+        fields.pack(fill='x',padx=12,pady=9)
+        start=tk.StringVar(value='0')
+        end=tk.StringVar(value=f'{self._duration_min():.3f}')
+        note=tk.StringVar(value='punktowy odczyt U/I; okres grzania potwierdza operator')
+        for col,(label,value) in enumerate([
+            ('Od CSV [min]',start),('Do CSV [min]',end),('Uwagi',note)]):
+            ttk.Label(fields,text=label).grid(row=0,column=col,sticky='w',padx=5)
+            ttk.Entry(fields,textvariable=value,
+                width=12 if col<2 else 58).grid(row=1,column=col,padx=5,sticky='we')
+        ttk.Label(dlg,text='Q=U×I jest punktem z notatnika, NIE automatycznym '
+                           'pomiarem U/I ani mocą netto transportowaną przez PHP. '
+                           'Dziennik nie wyznacza sam ON/OFF.',
+                  wraplength=840).pack(anchor='w',padx=12,pady=5)
+        def apply():
+            chosen=tree.selection()
+            if not chosen:
+                messagebox.showinfo('Wybierz odczyt','Najpierw wskaż wiersz U/I.',parent=dlg)
+                return
+            point=points[int(chosen[0])]
+            try:
+                left=float(start.get().replace(',','.'))
+                right=float(end.get().replace(',','.'))
+                stage=PowerStage(left,right,point.power_w)
+                validate([stage])
+                if right>self._duration_min()+1e-8:
+                    raise ValueError('Etap wykracza poza koniec CSV.')
+                validate(target['stages']+[stage])
+            except ValueError as exc:
+                messagebox.showerror('Błędny przedział',str(exc),parent=dlg)
+                return
+            dlg.destroy()
+            if self._add_override(stage):
+                target.setdefault('power_evidence',[]).append({
+                    'start_min':left,'end_min':right,
+                    'voltage_v':point.voltage_v,'current_a':point.current_a,
+                    'power_w':point.power_w,
+                    'source':Path(choice).name+f', wiersz {point.row_number}',
+                    'note':note.get()[:350]})
+                self._autosave_current()
+                self.status.set('Przypisano punkt U/I z dziennika do okresu. '
+                    'Jego granice są deklaracją operatora, nie logiem zasilacza.')
+        bar=ttk.Frame(dlg)
+        bar.pack(fill='x',padx=10,pady=9)
+        ttk.Button(bar,text='Dodaj Q do wskazanego okresu',
+                   command=apply,style='Accent.TButton').pack(side='left',padx=7)
+        ttk.Button(bar,text='Anuluj',command=dlg.destroy).pack(side='left',padx=7)
+        dlg.wait_window()
 
     def _render_power_tree(self):
         row = self._get()
@@ -1081,14 +1373,20 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             copy = stages.copy(); copy[i] = st
             try: validate(copy)
             except ValueError as e: return messagebox.showerror('Moc Q', str(e))
-            stages[i] = st; self._render_power_tree(); self.update_power()
+            stages[i] = st
+            self._retain_matching_evidence(self._get())
+            self._render_power_tree()
+            self.update_power()
 
     def delete_stage(self):
         if self.active is None:
             return
         sel = self.power_tree.selection()
         if sel:
-            self._get()['stages'].pop(int(sel[0])); self._render_power_tree(); self.update_power()
+            self._get()['stages'].pop(int(sel[0]))
+            self._retain_matching_evidence(self._get())
+            self._render_power_tree()
+            self.update_power()
 
     def update_power(self):
         if self.active is None:
@@ -1139,7 +1437,17 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             operator_marker_stages(row.get('timeline_events', []), duration) + row['stages'],
             row['constant_q'],
             row['constant_scope'], row['cooling_confirmed'])
+        quality=row.get('sensor_quality')
+        if quality is None or (quality.calibration_mode!=row.get('calibration_mode','raw')
+                               or quality.ch4_excluded!=row.get('exclude_thermocouple4',False)):
+            quality=sensor_profiles.quality_report(
+                row['record'],row.get('calibration_mode','raw'),
+                row.get('exclude_thermocouple4',False))
+            row['sensor_quality']=quality
+        self.sensor_info.set(' | '.join(quality.notes())[:450] or
+            'Pomiary surowe; Tm=(T4+T5)/2. Włącz kalibrację wyłącznie świadomie.')
         self._render_summary()
+        self._refresh_comparison()
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')
@@ -1214,9 +1522,21 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             if self.show_individual.get():
                 for pos, c in [(0, COLOR['ev']), (1, COLOR['ev']), (2, COLOR['middle']),
                                (3, COLOR['middle']), (4, COLOR['co']), (5, COLOR['co'])]:
-                    ax.plot(X, [rec.values[i][pos] for i in idx], color=c, linewidth=.7, alpha=.3)
+                    ax.plot(X, [a.record.values[i][pos] for i in idx],
+                            color=c, linewidth=.75, alpha=.4,
+                            label=(f'T{(1,3,4,5,6,7)[pos]}'
+                                   if part==0 and pos in (4,5) else '_nolegend_'))
+                if row.get('calibration_mode')=='corrected':
+                    ax.plot(X,[(rec.values[i][0]+rec.values[i][1])/2 for i in idx],
+                            color=COLOR['ev'],alpha=.45,ls='--',lw=.8,
+                            label='Te surowe' if part==0 else '_nolegend_')
+                    ax.plot(X,[(rec.values[i][4]+rec.values[i][5])/2 for i in idx],
+                            color=COLOR['co'],alpha=.45,ls='--',lw=.8,
+                            label='Tc surowe' if part==0 else '_nolegend_')
             for signal, c, name in [(a.te, COLOR['ev'], 'Parownik ch1, ch3'),
-                                    (a.tm, COLOR['middle'], 'Sekcja środkowa ch4, ch5'),
+                                    (a.tm, COLOR['middle'],
+                                     'Środkowa: T5 (T4 wykl.)' if row.get('exclude_thermocouple4')
+                                     else 'Sekcja środkowa ch4, ch5'),
                                     (a.tc, COLOR['co'], 'Skraplacz ch6, ch7')]:
                 ax.plot(X, [signal[i] for i in idx], color=c, linewidth=1.8,
                         label=name if part == 0 else '_nolegend_')
@@ -1429,8 +1749,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         alias=f'{basename}__{ident}{Path(original.name).suffix or ".csv"}'
         clone_record=copy.copy(original)
         clone_record.name=alias
+        clone_processed=copy.copy(row['analysis'].record)
+        clone_processed.name=alias
         clone_analysis=copy.copy(row['analysis'])
-        clone_analysis.record=clone_record
+        clone_analysis.record=clone_processed
         return dict(row,record=clone_record,analysis=clone_analysis,
                     _original_row=row)
 
@@ -1450,6 +1772,32 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
         self._export_power(row, folder)
+        quality=row.get('sensor_quality') or sensor_profiles.quality_report(
+            row['_original_row']['record'] if '_original_row' in row else row['record'],
+            row.get('calibration_mode','raw'),
+            row.get('exclude_thermocouple4',False))
+        self._writer(folder/'kontrola_termopar.csv',
+            ['kanal','kalibracja','poza_20_105_liczba','probek',
+             'T4_odstajace','T6_T7_roznica_gt20K','T4_wykluczona'],
+            [[ch,quality.calibration_mode,dict(quality.extrapolated)[ch],
+              quality.total_samples,quality.ch4_outliers,
+              quality.condenser_disagreement,int(quality.ch4_excluded)]
+             for ch in sensor_profiles.CHANNELS])
+        if row.get('calibration_mode')=='corrected':
+            source=row.get('_original_row',row)['record']
+            corrected=row['analysis'].record
+            names=[f'T{ch}' for ch in sensor_profiles.CHANNELS]
+            self._writer(folder/'termopary_raw_vs_corrected.csv',
+                ['czas_min_od_CSV']+[f'{n}_raw_C' for n in names]
+                +[f'{n}_corrected_C' for n in names],
+                [[f'{(t-source.t[0])/60:.4f}']+
+                 [f'{v:.5f}' for v in raw]+[f'{v:.5f}' for v in cor]
+                 for t,raw,cor in zip(source.t,source.values,corrected.values)])
+        self._writer(folder/'zrodla_Q_z_dziennika.csv',
+            ['od_min','do_min','U_V','I_A','Q_UI_W','zrodlo','uwagi'],
+            [[e['start_min'],e['end_min'],e['voltage_v'],e['current_a'],
+              e['power_w'],e['source'],e['note']]
+             for e in row.get('power_evidence',[])])
         overview=build_experiment_summary(row)
         self._writer(folder/'podsumowanie_eksperymentu.csv',
                      ['plik','czas_zapisu_min','liczba_epizodow_O',
