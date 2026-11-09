@@ -673,10 +673,12 @@ def relative_resistance_proxy(t: list[float], delta_smooth: list[float],
     return rr, refs
 
 
-def analyze(rec: Record) -> Analysis:
+def analyze(rec: Record, *, exclude_tp4: bool=False) -> Analysis:
     t, v = rec.t, rec.values
     te = [(q[0]+q[1])/2 for q in v]
-    tm = [(q[2]+q[3])/2 for q in v]
+    # Excluding a malfunctioning TP4 affects ONLY Tm; never silently
+    # fabricate or interpolate its sample values.
+    tm = [q[3] for q in v] if exclude_tp4 else [(q[2]+q[3])/2 for q in v]
     tc = [(q[4]+q[5])/2 for q in v]
     delta = [e-c for e,c in zip(te,tc)]
     step = median([b-a for a,b in zip(t,t[1:]) if b>a]) or 1.0
@@ -704,6 +706,8 @@ def analyze(rec: Record) -> Analysis:
             t[begin:end],k1[begin:end],MIN_EPISODE_S,MAX_GAP_S)]
     dsmooth = segmented_average(delta, approx_window(WINDOW_DELTA_S, step), segments)
     notes = []
+    if exclude_tp4:
+        notes.append('TP4 wykluczona przez operatora z Tm, zachowano oryginalne odczyty TP4.')
     if rec.fragment_of:
         notes.append('FRAGMENT INNEGO ZAPISU: ' + rec.fragment_of + ' (nie traktować jako niezależnego testu)')
     if rec.bad_rows:
