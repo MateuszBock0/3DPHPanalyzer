@@ -89,3 +89,25 @@ Kliknij zielony O1/O2 na osi czasu lub podwojnie kliknij wiersz tabeli,
 aby powiekszyc ten epizod w zakladce Wykresy.
 Karty zmieniaja sie po edycji ON/OFF/Q. W eksporcie znajdziesz
 podsumowanie_eksperymentu.csv i epizody_podsumowanie.csv.
+
+
+FOLDER TESTS_NO_PCM, KALIBRACJA I DZIENNIK U/I
+-------------------------------------------
+1. Kliknij Otworz folder i wybierz TESTS_NO_PCM (nie Results).
+2. Program znajduje CSV PicoLog takze wewnatrz Nowy folder.zip. Pomija
+   stare Results/PHP_Results, kalibracje, drut i pozostale CSV bez kanalow.
+3. Zduplikowane pliki i krotsze prefiksy tego samego zapisu nie sa
+   liczone jako niezalezne testy.
+4. Zakladka Wykresy: Surowe (domyslnie) lub Skorygowane, przy czym
+   kalibracja 20-105 C jest EKSTRAPOLACJA powyzej tego zakresu.
+   Surowy CSV nie jest nadpisywany.
+5. Przy podejrzanej termoparze T4 zaznacz Wyklucz T4 z Tm. Wtedy
+   Tm oznacza jeden zmierzony kanal T5. T6 i T7 pokazujemy osobno.
+6. Moc Q / R: przycisk Dziennik U/I -> Q, wybierz drut(Arkusz1).csv,
+   wskaz wiersz i RĘCZNIE wpisz od/do w minutach od poczatku CSV.
+   Q=U*I jest punktem z notatek, nie zsynchronizowanym logiem.
+7. Eksport zachowuje informacje QA i zrodla Q w dodatkowych CSV.
+8. Po zmianie kalibracji i wykluczeniu T4 wyniki sa przeliczane,
+   a tryb jest zapisywany do sesji. Nie wycinaj i nie zmieniaj nazw
+   plikow wejsciowych.
+PELNA INSTRUKCJA: README_TESTS_NO_PCM.md w repozytorium GitHub.
