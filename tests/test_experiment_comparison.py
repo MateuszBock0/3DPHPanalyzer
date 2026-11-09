@@ -48,7 +48,7 @@ class ComparisonTests(unittest.TestCase):
         b=self.row()
         b['effective_stages']=[PowerStage(0,1,10),PowerStage(1,3,15)]
         self.assertTrue(any('nie ma jednej' in w
-                            for w in cmp.suitability_warnings([a,b]))
+                            for w in cmp.suitability_warnings([a,b])))
 
 
 if __name__=='__main__':
