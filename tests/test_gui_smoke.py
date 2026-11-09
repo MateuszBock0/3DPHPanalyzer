@@ -77,7 +77,7 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
         corrected=row['analysis'].record.values[0]
         self.assertNotEqual(corrected,raw)
         self.assertEqual(row['record'].values[0],raw)
-        self.assertIn('EKSTRAPOLACJA',self.app.sensor_info.get())
+        self.assertIn('Korekcja liniowa',self.app.sensor_info.get())
         self.app.sensor_mode.set('raw')
         self.app.update_sensors()
         self.assertEqual(row['analysis'].record.values[0],raw)
