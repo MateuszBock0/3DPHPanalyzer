@@ -44,6 +44,7 @@ from activity_assessment import assess_all
 from experiment_summary import build_experiment_summary
 import sensor_profiles
 import dataset_catalog
+import experiment_comparison as comparison
 
 
 def app_folder() -> Path:
@@ -186,18 +187,21 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.tabs = ttk.Notebook(main)
         self.tabs.pack(fill='both', expand=True)
         self.summary_page = ttk.Frame(self.tabs)
+        self.comparison_page = ttk.Frame(self.tabs)
         self.chart_page = ttk.Frame(self.tabs)
         self.events_page = ttk.Frame(self.tabs)
         self.diagnosis_page = ttk.Frame(self.tabs)
         self.power_page = ttk.Frame(self.tabs)
         self.help_page = ttk.Frame(self.tabs)
         self.tabs.add(self.summary_page, text='Podsumowanie')
+        self.tabs.add(self.comparison_page, text='Porównanie')
         self.tabs.add(self.chart_page, text='Wykresy')
         self.tabs.add(self.events_page, text='Epizody / ON? OFF?')
         self.tabs.add(self.diagnosis_page, text='Czy PHP pracuje?')
         self.tabs.add(self.power_page, text='Moc Q / R')
         self.tabs.add(self.help_page, text='Metodyka i obliczenia')
         self._build_summary_page()
+        self._build_comparison_page()
         self._build_chart_page()
         self._build_events_page()
         self._build_diagnosis_page()
@@ -208,6 +212,128 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.progress = ttk.Progressbar(foot, mode='determinate', length=150)
         self.progress.pack(side='right')
         ttk.Label(foot, textvariable=self.status, style='Sub.TLabel').pack(side='left', fill='x', expand=True)
+
+    def _build_comparison_page(self):
+        root=ttk.Frame(self.comparison_page)
+        root.pack(fill='both',expand=True,padx=10,pady=8)
+        ttk.Label(root,text='Porównanie odpowiedzi termicznej — bez automatycznego '
+            'uznawania prób za równoważne',style='Heading.TLabel').pack(anchor='w')
+        controls=ttk.Frame(root)
+        controls.pack(fill='x',pady=(7,5))
+        ttk.Label(controls,text='Wielkość:').pack(side='left')
+        self.comparison_metric=tk.StringVar(value='ΔT [K]')
+        ttk.Combobox(controls,textvariable=self.comparison_metric,state='readonly',
+                     values=comparison.METRICS,width=17).pack(side='left',padx=5)
+        ttk.Label(controls,text='Wyrównaj:').pack(side='left',padx=(10,3))
+        self.comparison_alignment=tk.StringVar(value='csv')
+        ttk.Combobox(controls,textvariable=self.comparison_alignment,state='readonly',
+                     width=26,values=['csv','on','on_estimate']).pack(side='left',padx=4)
+        ttk.Button(controls,text='Porównaj zaznaczone',
+                   command=self._draw_comparison).pack(side='left',padx=8)
+        ttk.Button(controls,text='Zapisz wykres PNG',
+                   command=self._save_comparison).pack(side='left',padx=4)
+        ttk.Label(root,text='Wybierz 2–8 wierszy (Ctrl/Shift). Wyrównanie: '
+            'csv = start pliku, on = ręczne ON, on_estimate = ON? tam, '
+            'gdzie brak ręcznego ON. Nie łącz plików będących prefiksami.',
+            style='Sub.TLabel',wraplength=980).pack(anchor='w',pady=(0,4))
+        list_frame=ttk.Frame(root)
+        list_frame.pack(fill='x',pady=3)
+        self.comparison_tree=ttk.Treeview(list_frame,show='headings',
+            columns=('name','q','mode','cooling'),selectmode='extended',height=5)
+        for key,title,width in [('name','CSV / eksperyment',360),
+                                ('q','Przypisana moc Q [W]',190),
+                                ('mode','Termopary',120),
+                                ('cooling','Chłodzenie',140)]:
+            self.comparison_tree.heading(key,text=title)
+            self.comparison_tree.column(key,width=width,stretch=key=='name')
+        self.comparison_tree.pack(fill='x',expand=True)
+        self.comparison_warning=tk.StringVar(value='Wczytaj kilka eksperymentów '
+            'i zaznacz co najmniej dwa.')
+        ttk.Label(root,textvariable=self.comparison_warning,style='Sub.TLabel',
+                  wraplength=1040,justify='left').pack(fill='x',pady=5)
+        self.comparison_figure=Figure(figsize=(10,6),dpi=100,facecolor='white')
+        self.comparison_ax=self.comparison_figure.add_subplot(111)
+        self.comparison_canvas=FigureCanvasTkAgg(
+            self.comparison_figure,master=root)
+        self.comparison_canvas.get_tk_widget().pack(fill='both',expand=True)
+        self.comparison_ax.set_xlabel('Czas od początku CSV [min]')
+        self.comparison_ax.set_ylabel('ΔT [K]')
+        self.comparison_ax.grid(alpha=.22)
+        self.comparison_canvas.draw_idle()
+
+    def _refresh_comparison(self):
+        if not hasattr(self,'comparison_tree'):
+            return
+        selected=set(self.comparison_tree.selection())
+        self.comparison_tree.delete(*self.comparison_tree.get_children())
+        for i,row in enumerate(self.record_rows):
+            levels=comparison.power_levels(row)
+            leveltext=' / '.join(f'{q:g}' for q in levels) if levels else 'nieznana'
+            self.comparison_tree.insert('','end',iid=str(i),values=(
+                row['record'].name,leveltext,
+                row.get('calibration_mode','raw'),
+                'potwierdzone' if row.get('cooling_confirmed') else 'niepotwierdzone'))
+        for ident in selected:
+            if ident in self.comparison_tree.get_children():
+                self.comparison_tree.selection_add(ident)
+
+    def _draw_comparison(self):
+        indexes=sorted(int(x) for x in self.comparison_tree.selection())
+        if not 2<=len(indexes)<=8:
+            messagebox.showinfo('Porównanie','Wybierz od 2 do 8 pomiarów '
+                                'z tabeli (Ctrl/Shift).',parent=self)
+            return
+        rows=[self.record_rows[i] for i in indexes]
+        mode=self.comparison_alignment.get()
+        metric=self.comparison_metric.get()
+        self.comparison_ax.clear()
+        messages=comparison.suitability_warnings(rows,mode)
+        drawn=0
+        for row in rows:
+            origin,label=comparison.anchor_seconds(row,mode)
+            if origin is None:
+                messages.append(row['record'].name+': pominięto (brak ON).')
+                continue
+            record=row['record']
+            values=comparison.series_for(row,metric)
+            segments,gaps=engine.recording_segments(record.t)
+            for part,(begin,end) in enumerate(segments):
+                xs=[(v-origin)/60 for v in record.t[begin:end]]
+                ys=[v if v is not None and math.isfinite(v) else float('nan')
+                    for v in values[begin:end]]
+                if not xs:
+                    continue
+                use=downsample_indices(xs,[ys])
+                x=[xs[i] for i in use]
+                y=[ys[i] for i in use]
+                caption=(record.name+' · '+row.get('calibration_mode','raw')+
+                         ' · '+label)
+                self.comparison_ax.plot(x,y,lw=1.3,
+                    label=caption if part==0 else '_nolegend_')
+            drawn+=1
+        if mode!='csv':
+            self.comparison_ax.axvline(0,color='#5a6f85',ls='--',lw=1)
+        self.comparison_ax.grid(alpha=.25)
+        self.comparison_ax.set_xlabel(
+            'Czas od początku CSV [min]' if mode=='csv'
+            else 'Czas względem ON / ON? [min]')
+        self.comparison_ax.set_ylabel(metric)
+        if drawn:
+            self.comparison_ax.legend(loc='best',fontsize=7)
+        if not messages:
+            messages=['Q i warunki chłodzenia są oznaczone jako porównywalne '
+                      'przez operatora, ale nadal należy sprawdzić montaż termopar.']
+        self.comparison_warning.set('UWAGI: '+' | '.join(messages))
+        self.comparison_figure.tight_layout()
+        self.comparison_canvas.draw_idle()
+
+    def _save_comparison(self):
+        where=filedialog.asksaveasfilename(
+            title='Eksport porównania',defaultextension='.png',
+            filetypes=[('PNG','*.png')])
+        if where:
+            self.comparison_figure.savefig(where,dpi=180,
+                                           bbox_inches='tight',facecolor='white')
 
     def _build_summary_page(self):
         """One CSV, one conservative summary; never a second K1/K2 detector."""
@@ -863,6 +989,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                         self.listbox.insert('end', r['record'].name)
                         added += 1
                     self._set_busy(False)
+                    self._refresh_comparison()
                     if self.record_rows:
                         self.listbox.select_clear(0, 'end')
                         self.listbox.select_set(len(self.record_rows) - 1)
@@ -1320,6 +1447,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self.sensor_info.set(' | '.join(quality.notes())[:450] or
             'Pomiary surowe; Tm=(T4+T5)/2. Włącz kalibrację wyłącznie świadomie.')
         self._render_summary()
+        self._refresh_comparison()
         r = row['results']
         if r['reference_error']:
             self.r_info.set(r['reference_error'] + ' Wartości R/Rref pozostają puste.')
