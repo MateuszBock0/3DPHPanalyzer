@@ -97,6 +97,7 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
     def test_comparison_overlay_two_tests_and_no_fake_on(self):
         from copy import copy
         a=self.app._get()
+        a['effective_stages']=[PowerStage(0,2.98,10)]
         second=dict(a)
         record=copy(a['record'])
         record.name='second.csv'
