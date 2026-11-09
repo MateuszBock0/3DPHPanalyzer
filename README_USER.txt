@@ -111,3 +111,13 @@ FOLDER TESTS_NO_PCM, KALIBRACJA I DZIENNIK U/I
    a tryb jest zapisywany do sesji. Nie wycinaj i nie zmieniaj nazw
    plikow wejsciowych.
 PELNA INSTRUKCJA: README_TESTS_NO_PCM.md w repozytorium GitHub.
+
+
+POROWNANIE WIELU TESTOW
+-----------------------
+Wybierz zakladke Porownanie. CTRL / SHIFT zaznacz 2-8 wierszy,
+wybierz DeltaT, Te, Tc, T6, T7, R_app lub RMS, nastepnie Porownaj.
+Wyrownanie csv = start zapisu, on = recznie potwierdzone wlaczenie,
+on_estimate = ON? z reakcji temperatury gdy brak potwierdzonego ON.
+Brak Q / rozne Q i chlodzenie niepotwierdzone wywoluja ostrzezenia.
+Punkty z brakujacymi danymi nie sa laczone przez luki czasowe.
