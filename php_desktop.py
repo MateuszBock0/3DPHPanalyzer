@@ -60,26 +60,7 @@ def path_safe(s):
     return engine.safe_name(Path(s).stem)
 
 
-def input_files(path: Path):
-    """Read explicitly selected files/folder; don't accidentally ingest exports."""
-    output = []
-    if path.is_dir():
-        files = sorted(p for p in path.rglob('*') if p.is_file() and
-                       'results' not in [x.lower() for x in p.relative_to(path).parts])
-    else:
-        files = [path]
-    for file in files:
-        if file.suffix.lower() == '.csv':
-            output.append((file.name, str(file), file.read_bytes()))
-        elif file.suffix.lower() == '.zip':
-            with zipfile.ZipFile(file) as z:
-                for entry in z.infolist():
-                    if entry.is_dir() or not entry.filename.lower().endswith('.csv'):
-                        continue
-                    if '__macosx' in entry.filename.lower() or '/results/' in '/' + entry.filename.lower():
-                        continue
-                    output.append((Path(entry.filename).name, f'{file.name} / {entry.filename}', z.read(entry)))
-    return output
+from bulk_inputs import input_files, deduplicate_files
 
 
 def downsample_indices(t, series, max_buckets=1700):
@@ -794,7 +775,11 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 raw.extend(input_files(path))
             if not raw:
                 raise ValueError('Nie znaleziono CSV w wybranych plikach ani folderach.')
+            raw, duplicates = deduplicate_files(raw)
             records, problems = engine.unique_records(raw)
+            if duplicates:
+                problems.append(f'Pominięto {len(duplicates)} identycznych kopii CSV '
+                                '(duplikaty nie są niezależnymi eksperymentami).')
             if not records:
                 raise ValueError('Nie znaleziono poprawnych danych PicoLog.\n' + '\n'.join(problems[:8]))
             results = []
