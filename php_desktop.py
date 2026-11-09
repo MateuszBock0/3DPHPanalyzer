@@ -43,7 +43,7 @@ from episode_validation import resolved_q_label, review_all_k2
 from activity_assessment import assess_all
 from experiment_summary import build_experiment_summary
 from thermal_quality import (transform_record, assess_quality, CHANNELS,
-                             FIT_RANGE_C, PROFILE_NAME)
+                             FIT_RANGE_C, PROFILE_NAME, COEFFICIENTS)
 from power_diary import read_diary
 
 
@@ -746,6 +746,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 restored = validated_import(config, row, legacy_confirmed=True)
             for key, value in restored.items():
                 row[key] = value
+            self._rebuild_measurement(row)
+            self.calibration_var.set(bool(row.get('calibration_enabled',False)))
+            self.exclude_tp4_var.set(bool(row.get('exclude_tp4',False)))
+            self._set_quality_message(row)
             self.reference_enabled.set(row['ref_enabled'])
             self.cooling_confirmed.set(row['cooling_confirmed'])
             self.reference_from.set(f'{row["ref_start"]:g}')
@@ -1596,6 +1600,41 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             'ON?/OFF? to estymacja z temperatur, możliwa ręczna korekta.\n', encoding='utf-8')
         engine.make_heating_diagnostics(a, plotdir)
         engine.export_series(a, folder/'przebieg_analityczny.csv')
+        original=row.get('_original_row',row)
+        raw=original.get('raw_record',original['record'])
+        corrected,_warnings=transform_record(raw,True)
+        # Both raw and "idealna" for every original sample, irrespective
+        # of the selected analysis mode. No overwriting laboratory CSV.
+        self._writer(folder/'termopary_surowe_i_idealne.csv',
+            ['czas_od_CSV_min']+[f'TP{ch}_{mode}_C' for ch in CHANNELS
+                    for mode in ('surowa','idealna','poza_zakresem_fit')] ,
+            [[f'{(t-raw.t[0])/60:.5f}']+
+             [v for j in range(6) for v in
+               (f'{raw.values[i][j]:.6f}',f'{corrected.values[i][j]:.6f}',
+                int(not FIT_RANGE_C[0]<=raw.values[i][j]<=FIT_RANGE_C[1]))]
+             for i,t in enumerate(raw.t)])
+        quality=assess_quality(raw,exclude_tp4=row.get('exclude_tp4',False))
+        metadata={
+            'analysis_mode':'idealna' if row.get('calibration_enabled') else 'raw',
+            'raw_csv_name':raw.name,
+            'calibration_profile':PROFILE_NAME,
+            'calibration_fit_range_c':list(FIT_RANGE_C),
+            'calibration_coefficient_a_b_by_channel':
+                {str(ch):list(COEFFICIENTS[ch]) for ch in CHANNELS},
+            'extrapolation':'All values outside 20-105C corrected by extrapolation; '
+                            'uncertainty is unvalidated.',
+            'exclude_tp4_from_tm':bool(row.get('exclude_tp4',False)),
+            'condenser_tp6_tp7_median_abs_diff_c':
+                quality.condenser_median_difference_c,
+            'condenser_tp6_tp7_max_abs_diff_c':
+                quality.condenser_max_difference_c,
+            'tp4_suspect':quality.suspect_tp4,
+            'warnings':row.get('quality_notes',[]),
+            'diary_point':row.get('selected_diary_point'),
+            'power_method':'Manual U*I or Q; no electrical channels in PicoLog',
+        }
+        (folder/'jakość_pomiaru_i_kalibracja.json').write_text(
+            json.dumps(metadata,ensure_ascii=False,indent=2),encoding='utf-8')
         self._export_power(row, folder)
         overview=build_experiment_summary(row)
         self._writer(folder/'podsumowanie_eksperymentu.csv',
