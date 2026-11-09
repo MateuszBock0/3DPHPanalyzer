@@ -69,6 +69,35 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
         self.assertLess(left,70/60)
         self.assertGreater(right,110/60)
 
+    def test_tp4_exclusion_keeps_raw_identity_and_recomputes_tm(self):
+        row=self.app._get()
+        original=row['record'].values[0][2]
+        before=row['analysis'].tm[0]
+        self.app.exclude_tp4_var.set(True)
+        self.app.update_temperature_profile()
+        self.assertTrue(row['exclude_tp4'])
+        self.assertEqual(row['record'].values[0][2],original)
+        self.assertNotEqual(row['analysis'].tm[0],before) if original!=row['record'].values[0][3] else None
+        self.assertAlmostEqual(row['analysis'].tm[0],row['record'].values[0][3])
+        self.assertIn('TP4',str(row['analysis'].notes))
+
+    def test_calibration_requires_consent_and_preserves_raw_record(self):
+        from unittest.mock import patch
+        row=self.app._get()
+        first=row['record'].values[0][0]
+        with patch('php_desktop.messagebox.askyesno',return_value=False):
+            self.app.calibration_var.set(True)
+            self.app.update_temperature_profile()
+        self.assertFalse(row.get('calibration_enabled',False))
+        self.app.calibration_var.set(True)
+        with patch('php_desktop.messagebox.askyesno',return_value=True):
+            self.app.update_temperature_profile()
+        self.assertTrue(row.get('calibration_enabled'))
+        self.assertNotEqual(row['analysis'].record.values[0][0],first)
+        self.assertEqual(row['record'].values[0][0],first)
+        self.assertEqual(row['analysis'].record.t,row['record'].t)
+        self.assertIn('KALIBROWANE',self.app.quality_info.get())
+
     def test_inline_q_and_terminal_off(self):
         from timeline_editor import timeline_stages
         from power_model import PowerStage
