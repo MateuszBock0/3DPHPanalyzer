@@ -42,6 +42,9 @@ from timeline_gui import TimelineInteractionMixin
 from episode_validation import resolved_q_label, review_all_k2
 from activity_assessment import assess_all
 from experiment_summary import build_experiment_summary
+from thermal_quality import (transform_record, assess_quality, CHANNELS,
+                             FIT_RANGE_C, PROFILE_NAME)
+from power_diary import read_diary
 
 
 def app_folder() -> Path:
@@ -102,6 +105,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         self._drag_suggestion_index = None
         self._suggestion_line_artists = {}
         self._last_plot_record = None
+        self.calibration_var=tk.BooleanVar(value=False)
+        self.exclude_tp4_var=tk.BooleanVar(value=False)
+        self.quality_info=tk.StringVar(value='Kalibracja: surowe CSV. TP4 i TP6/7: kontrola jakości po załadowaniu.')
         self._poll_after_id = None
         self._first_q_after_id = None
         self._drag_lines = []
@@ -159,11 +165,22 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         for label, callback, sty in [
             ('+ Otwórz pliki CSV/ZIP', self.add_files, 'Accent.TButton'),
             ('Otwórz folder', self.add_folder, 'TButton'),
+            ('Dziennik U/I (drut)', self.load_power_diary, 'TButton'),
             ('Wczytaj konfigurację JSON', self.load_configuration, 'TButton'),
             ('Analizuj wszystkie', self.analyze_all, 'TButton'),
             ('Eksport wybranego', self.export_selected, 'TButton'),
             ('Eksport całości', self.export_all, 'TButton')]:
             ttk.Button(bar, text=label, command=callback, style=sty).pack(side='left', padx=(0, 8))
+        qualitybar=ttk.Frame(self)
+        qualitybar.pack(fill='x',padx=20,pady=(0,8))
+        ttk.Checkbutton(qualitybar,text='T idealna (korekta PT100 20–105°C)',
+                        variable=self.calibration_var,
+                        command=self.update_temperature_profile).pack(side='left',padx=(0,10))
+        ttk.Checkbutton(qualitybar,text='Wyklucz TP4 z Tm',
+                        variable=self.exclude_tp4_var,
+                        command=self.update_temperature_profile).pack(side='left',padx=(0,12))
+        ttk.Label(qualitybar,textvariable=self.quality_info,style='Sub.TLabel',
+                  wraplength=700).pack(side='left')
         paned = ttk.Panedwindow(self, orient='horizontal')
         paned.pack(fill='both', expand=True, padx=20, pady=(0, 10))
         sidebar = ttk.Frame(paned, style='Surface.TFrame', width=275)
@@ -791,7 +808,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     periods = derive_estimated_periods(record.t, a.heating_events, gaps)
                     suggestions=initial_suggestions(
                         a.heating_events, record.t[0], (record.t[-1]-record.t[0])/60)
-                    results.append({'record': record, 'analysis': a, 'stages': [], 'results': None,
+                    results.append({'record': record, 'raw_record':record,
+                                    'calibration_enabled':False,'exclude_tp4':False,
+                                    'selected_diary_point':None,'quality_notes':[],
+                                    'analysis': a, 'stages': [], 'results': None,
                                     'periods': periods, 'constant_q': None, 'constant_scope': 'estimated',
                                     'effective_stages': [], 'ref_enabled': False,
                                     'cooling_confirmed': False, 'k2_reviews': {}, 'activity_assessments': {},
@@ -801,6 +821,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                     row = results[-1]
                     try:
                         row['session_restored'] = restore_session(row)
+                        self._rebuild_measurement(row)
                     except (OSError, ValueError, json.JSONDecodeError) as restore_error:
                         problems.append(f'Nie przywrócono lokalnej sesji {record.name}: {restore_error}')
                 except Exception as error:
@@ -850,6 +871,9 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             return
         self.active = int(idx[0])
         row = self.record_rows[self.active]
+        self.calibration_var.set(bool(row.get('calibration_enabled',False)))
+        self.exclude_tp4_var.set(bool(row.get('exclude_tp4',False)))
+        self._set_quality_message(row)
         self.reference_enabled.set(row['ref_enabled'])
         self.cooling_confirmed.set(row['cooling_confirmed'])
         self.reference_from.set(str(row['ref_start']))
@@ -870,6 +894,79 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         if self.active is None:
             raise ValueError('Najpierw wczytaj i wybierz pomiar.')
         return self.record_rows[self.active]
+
+    def _rebuild_measurement(self,row):
+        """Rebuild derived evidence without changing original data or its fingerprint."""
+        raw=row.get('raw_record',row['record'])
+        corrected,warnings=transform_record(raw,row.get('calibration_enabled',False))
+        quality=assess_quality(raw,exclude_tp4=row.get('exclude_tp4',False))
+        analysis=engine.analyze(corrected,exclude_tp4=row.get('exclude_tp4',False))
+        analysis.notes.extend(warnings)
+        analysis.notes.extend(quality.notes)
+        row['analysis']=analysis
+        row['quality']=quality
+        row['quality_notes']=warnings+list(quality.notes)
+
+    def _set_quality_message(self,row):
+        quality=row.get('quality')
+        if quality is None:
+            quality=assess_quality(row.get('raw_record',row['record']),
+                                   exclude_tp4=row.get('exclude_tp4',False))
+            row['quality']=quality
+        mode='KALIBROWANE' if row.get('calibration_enabled') else 'SUROWE'
+        flags=[]
+        if quality.suspect_tp4:
+            flags.append('podejrzenie awarii TP4')
+        if quality.condenser_median_difference_c>10:
+            flags.append('T6-T7 duża różnica')
+        if row.get('calibration_enabled'):
+            flags.append('POZA 20–105°C: ekstrapolacja')
+        self.quality_info.set(f'{mode} | mediana |T6–T7| = '
+            f'{quality.condenser_median_difference_c:.1f}°C | '
+            + ('; '.join(flags) if flags else 'brak silnych flag'))
+
+    def update_temperature_profile(self):
+        if self.active is None:
+            return
+        row=self._get()
+        before=(bool(row.get('calibration_enabled')),
+                bool(row.get('exclude_tp4')))
+        desired=(bool(self.calibration_var.get()),bool(self.exclude_tp4_var.get()))
+        if before==desired:
+            return
+        if desired[0] and not messagebox.askyesno(
+            'Korekcja poza zakresem kalibracji',
+            'Dopasowanie PT100 dotyczy 20–105°C. Wysokie temperatury '
+            'zostaną EKSTRAPOLOWANE. Dane surowe pozostaną niezmienione. '
+            'Zastosować korekcję dla tego CSV?',parent=self):
+            self.calibration_var.set(before[0])
+            self.exclude_tp4_var.set(before[1])
+            return
+        try:
+            row['calibration_enabled'],row['exclude_tp4']=desired
+            self._rebuild_measurement(row)
+            # New temperature data change detector outputs and K1/K2. Do not
+            # silently discard any operator-adjusted thermal suggestions.
+            if all(ev.source=='automatic' for ev in row.get('thermal_suggestions', [])):
+                a=row['analysis']
+                row['thermal_suggestions']=initial_suggestions(
+                    a.heating_events,a.record.t[0],
+                    (a.record.t[-1]-a.record.t[0])/60)
+            self._recalculate(notify=True)
+            self._render_power_tree()
+            self._render_events()
+            self._render_diagnosis()
+            self.draw_plot()
+            self._set_quality_message(row)
+            self._autosave_current()
+            self.status.set('Zmieniono profil temperatur; przeliczono K1/K2, ΔT, R i podsumowanie. '
+                'Oryginalne CSV nie zmieniono.')
+        except Exception as exc:
+            row['calibration_enabled'],row['exclude_tp4']=before
+            self._rebuild_measurement(row)
+            self.calibration_var.set(before[0])
+            self.exclude_tp4_var.set(before[1])
+            messagebox.showerror('Korekcja termopar',str(exc),parent=self)
 
     def _prompt_first_q(self):
         """Keep the summary visible; Q entry is always available on the chart."""
