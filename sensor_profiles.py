@@ -7,6 +7,8 @@ with the 3–6 November 2026 laboratory records.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+import csv
+import io
 from copy import copy
 from math import isfinite
 
@@ -91,3 +93,38 @@ def voltage_current_power(voltage, current):
     if not (isfinite(u) and isfinite(i) and u>0 and i>0):
         raise ValueError('U [V] i I [A] muszą być skończone i dodatnie.')
     return u*i
+
+
+@dataclass(frozen=True)
+class DiaryPowerPoint:
+    row_number: int
+    voltage_v: float
+    current_a: float
+    power_w: float
+    context: str
+
+
+def diary_power_points(data):
+    """Unstructured drut(Arkusz1).csv: only propose numeric U/I.
+
+    Do NOT try to infer dates, switch times, stage boundaries or even
+    experiment identity from juxtaposed handwritten columns. The user must
+    select the matching diary row and assign the start/end in CSV minutes.
+    """
+    text=data.decode('utf-8-sig',errors='replace')
+    rows=list(csv.reader(io.StringIO(text),delimiter=';'))
+    candidates=[]
+    for number,row in enumerate(rows,1):
+        if len(row)<=8:
+            continue
+        try:
+            voltage=float(row[7].strip().replace(',','.'))
+            current=float(row[8].strip().replace(',','.'))
+            power=voltage_current_power(voltage,current)
+        except (ValueError,IndexError):
+            continue
+        if not (2<=voltage<=30 and .1<=current<=5 and 1<=power<=100):
+            continue
+        context=' | '.join(x.strip()[:60] for x in row[:7] if x.strip())
+        candidates.append(DiaryPowerPoint(number,voltage,current,power,context[:180]))
+    return candidates
