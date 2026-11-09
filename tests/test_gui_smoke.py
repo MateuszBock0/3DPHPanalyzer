@@ -69,6 +69,31 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
         self.assertLess(left,70/60)
         self.assertGreater(right,110/60)
 
+    def test_switching_calibration_twice_never_compounds_fit(self):
+        row=self.app._get()
+        raw=row['record'].values[0]
+        self.app.sensor_mode.set('corrected')
+        self.app.update_sensors()
+        corrected=row['analysis'].record.values[0]
+        self.assertNotEqual(corrected,raw)
+        self.assertEqual(row['record'].values[0],raw)
+        self.assertIn('EKSTRAPOLACJA',self.app.sensor_info.get())
+        self.app.sensor_mode.set('raw')
+        self.app.update_sensors()
+        self.assertEqual(row['analysis'].record.values[0],raw)
+        self.app.sensor_mode.set('corrected')
+        self.app.update_sensors()
+        self.assertEqual(row['analysis'].record.values[0],corrected)
+
+    def test_t4_exclusion_is_visible_and_saved_in_row(self):
+        row=self.app._get()
+        self.app.exclude_t4.set(True)
+        self.app.update_sensors()
+        self.assertTrue(row['exclude_thermocouple4'])
+        self.assertEqual(row['analysis'].tm[0],34.)
+        self.assertIn('T4 wykluczono',self.app.sensor_info.get())
+        self.assertEqual(row['record'].values[0][2],34.)
+
     def test_inline_q_and_terminal_off(self):
         from timeline_editor import timeline_stages
         from power_model import PowerStage
