@@ -280,8 +280,13 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
         view=build_experiment_summary(row)
         row['summary_overview']=view
         self.summary_filename.set(view.filename)
+        qa=row.get('sensor_quality')
+        qa_text=(' ·  T4 wykl.: TAK' if qa is not None and qa.ch4_excluded else '')
+        if qa is not None and qa.condenser_disagreement:
+            qa_text+=f' ·  T6/T7 >20K: {qa.condenser_disagreement}/{qa.total_samples}'
         self.summary_subtitle.set(
             f'Czas zapisu: {view.duration_min:.2f} min   ·   '
+            f'Temperatury: {row.get("calibration_mode","raw")} {qa_text}   ·   '
             f'Liczba O1/O2: {view.count}   ·   '
             f'Chłodzenie porównywalne wg operatora: {"TAK" if view.cooling_confirmed else "niepotwierdzone"}'
             '   ·   Oscylacje temperatur nie dowodzą ruchu czynnika.')
@@ -754,6 +759,8 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 row[key] = value
             self.reference_enabled.set(row['ref_enabled'])
             self.cooling_confirmed.set(row['cooling_confirmed'])
+            self.sensor_mode.set(row.get('calibration_mode','raw'))
+            self.exclude_t4.set(row.get('exclude_thermocouple4',False))
             self.reference_from.set(f'{row["ref_start"]:g}')
             self.reference_to.set(f'{row["ref_end"]:g}')
             self._recalculate()
@@ -1119,8 +1126,7 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
                 validate([stage])
                 if right>self._duration_min()+1e-8:
                     raise ValueError('Etap wykracza poza koniec CSV.')
-                if validate(target['stages']+[stage]) is None:
-                    pass
+                validate(target['stages']+[stage])
             except ValueError as exc:
                 messagebox.showerror('Błędny przedział',str(exc),parent=dlg)
                 return
