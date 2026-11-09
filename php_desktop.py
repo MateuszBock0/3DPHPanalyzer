@@ -970,9 +970,10 @@ class PHPDesktop(TimelineInteractionMixin, tk.Tk):
             flags.append('podejrzenie awarii TP4')
         if quality.condenser_median_difference_c>10:
             flags.append('T6-T7 duża różnica')
-        if row.get('calibration_enabled'):
+        if row.get('calibration_enabled') and any(
+                'EKSTRAPOLACJ' in note for note in row.get('quality_notes',[])):
             flags.append('POZA 20–105°C: ekstrapolacja')
-        self.quality_info.set(f'{mode} | mediana |T6–T7| = '
+        self.quality_info.set(f'{mode} | surowa mediana |T6–T7| = '
             f'{quality.condenser_median_difference_c:.1f}°C | '
             + ('; '.join(flags) if flags else 'brak silnych flag'))
 
