@@ -6,6 +6,7 @@ calibration sheets, notebook CSVs and executables must not become tests.
 from __future__ import annotations
 import csv
 import hashlib
+import os
 import io
 import re
 import zipfile
@@ -45,10 +46,19 @@ def input_files(path):
     Truncated prefix exports are separately recognised by unique_records().
     """
     path=Path(path)
-    # Prefer loose source CSV over an identical copy embedded in an archive.
-    files=sorted((p for p in path.rglob('*') if p.is_file()
-                  and not _excluded(p.relative_to(path).parts)),
-                 key=lambda p:(p.suffix.lower()=='.zip',str(p).casefold())) if path.is_dir() else [path]
+    # Prune large installed-program and Results trees BEFORE visiting them.
+    # Prefer loose PicoLog CSV over an identical copy embedded in an archive.
+    if path.is_dir():
+        files=[]
+        for base,dirs,names in os.walk(path,followlinks=False):
+            dirs[:]=[d for d in dirs if d.casefold() not in SKIP_DIRS]
+            for name in names:
+                candidate=Path(base)/name
+                if candidate.suffix.lower() in ('.csv','.zip') and candidate.is_file():
+                    files.append(candidate)
+        files.sort(key=lambda p:(p.suffix.lower()=='.zip',str(p).casefold()))
+    else:
+        files=[path]
     rows=[]
     digests=set()
     for file in files:
