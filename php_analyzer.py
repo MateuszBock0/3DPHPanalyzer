@@ -708,9 +708,9 @@ def analyze(rec: Record, *, exclude_thermocouple4=False) -> Analysis:
     if exclude_thermocouple4:
         notes.append('QA: T4 wykluczono z agregacji; Tm oznacza tylko T5. '
                      'K1/DeltaT nadal korzystają z T1/T3 i T6/T7.')
-    if rec.fragment_of:
+    if getattr(rec,'fragment_of',''):
         notes.append('FRAGMENT INNEGO ZAPISU: ' + rec.fragment_of + ' (nie traktować jako niezależnego testu)')
-    if rec.bad_rows:
+    if getattr(rec,'bad_rows',0):
         notes.append(f'Pominięto nieprawidłowe wiersze CSV: {rec.bad_rows}')
     for idx, ch in enumerate(CHANNELS):
         limit=max(10.0,5*step)
