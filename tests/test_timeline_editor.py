@@ -163,7 +163,7 @@ class SessionTests(unittest.TestCase):
                ThermalSuggestion(8,'HEATING_OFF_EST','operator_added')]
         row=dict(self.row,thermal_suggestions=edits)
         cfg=export_configuration(row)
-        self.assertEqual(cfg['schema_version'],5)
+        self.assertEqual(cfg['schema_version'],6)
         restored=validated_import(cfg,row)
         self.assertEqual(restored['thermal_suggestions'],edits)
         self.assertEqual(restored['periods'][0].state,'UNKNOWN')
