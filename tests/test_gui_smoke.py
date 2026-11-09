@@ -94,6 +94,25 @@ class DesktopTimelineSmokeTests(unittest.TestCase):
         self.assertIn('T4 wykluczono',self.app.sensor_info.get())
         self.assertEqual(row['record'].values[0][2],34.)
 
+    def test_comparison_overlay_two_tests_and_no_fake_on(self):
+        from copy import copy
+        a=self.app._get()
+        second=dict(a)
+        record=copy(a['record'])
+        record.name='second.csv'
+        second['record']=record
+        second['effective_stages']=[PowerStage(0,2.98,20)]
+        self.app.record_rows.append(second)
+        self.app._refresh_comparison()
+        self.app.comparison_tree.selection_set(('0','1'))
+        self.app._draw_comparison()
+        self.assertGreaterEqual(len(self.app.comparison_ax.lines),2)
+        self.assertIn('Różne',self.app.comparison_warning.get())
+        self.app.comparison_alignment.set('on')
+        self.app._draw_comparison()
+        self.assertIn('Brak ON',self.app.comparison_warning.get()+
+                      ' '+self.app.comparison_warning.get().lower())
+
     def test_inline_q_and_terminal_off(self):
         from timeline_editor import timeline_stages
         from power_model import PowerStage
