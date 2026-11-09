@@ -170,7 +170,8 @@ def validated_import(config, row, *, legacy_confirmed=False):
         validated_analysis=engine.analyze(processed,exclude_tp4=exclude_tp4)
     result = calculate(record.t, validated_analysis.delta, resolved,
                        (start, end) if enabled else None,
-                       te=validated_analysis.te, tc=validated_analysis.tc)
+                       te=getattr(validated_analysis,'te',None),
+                       tc=getattr(validated_analysis,'tc',None))
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'calibration_enabled':calibration_enabled,'exclude_tp4':exclude_tp4,
