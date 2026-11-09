@@ -9,6 +9,7 @@ from timeline_editor import (Transition, validate_transitions, resolve_schedule,
                              ThermalSuggestion, validate_suggestions, suggested_heating_events)
 from power_model import derive_estimated_periods
 import php_analyzer as engine
+from thermal_quality import transform_record
 
 class LegacyConfigurationError(ValueError):
     """Older configuration cannot be verified automatically."""
@@ -159,10 +160,17 @@ def validated_import(config, row, *, legacy_confirmed=False):
     if start < 0 or end <= start or (enabled and end > duration + 1e-9):
         raise ValueError('Niepoprawne okno referencji.')
     resolved = resolve_schedule(periods, constant, overrides, duration, scope, timeline)
-    result = calculate(record.t, row['analysis'].delta, resolved,
+    # A saved calibrated session must be checked against the SAME temperature
+    # mode when imported into a default/raw view, without editing raw CSV.
+    if (calibration_enabled==row.get('calibration_enabled',False) and
+            exclude_tp4==row.get('exclude_tp4',False)):
+        validated_analysis=row['analysis']
+    else:
+        processed,_=transform_record(record,calibration_enabled)
+        validated_analysis=engine.analyze(processed,exclude_tp4=exclude_tp4)
+    result = calculate(record.t, validated_analysis.delta, resolved,
                        (start, end) if enabled else None,
-                       te=getattr(row['analysis'],'te',None),
-                       tc=getattr(row['analysis'],'tc',None))
+                       te=validated_analysis.te, tc=validated_analysis.tc)
     if result['reference_error']:
         raise ValueError('Nie można przywrócić Rref: ' + result['reference_error'])
     return {'calibration_enabled':calibration_enabled,'exclude_tp4':exclude_tp4,
