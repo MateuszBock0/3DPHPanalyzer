@@ -45,8 +45,10 @@ def input_files(path):
     Truncated prefix exports are separately recognised by unique_records().
     """
     path=Path(path)
-    files=sorted(p for p in path.rglob('*') if p.is_file()
-                 and not _excluded(p.relative_to(path).parts)) if path.is_dir() else [path]
+    # Prefer loose source CSV over an identical copy embedded in an archive.
+    files=sorted((p for p in path.rglob('*') if p.is_file()
+                  and not _excluded(p.relative_to(path).parts)),
+                 key=lambda p:(p.suffix.lower()=='.zip',str(p).casefold())) if path.is_dir() else [path]
     rows=[]
     digests=set()
     for file in files:
