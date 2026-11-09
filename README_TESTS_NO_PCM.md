@@ -48,3 +48,10 @@ Instrukcja dla rzeczywistej struktury `C:\\Users\\Mateusz\\Desktop\\3D_PHP\\TEST
 ## Co program celowo NIE robi
 
 Nie wylicza Q z temperatur. Nie dopasowuje godzin z nieustrukturyzowanego arkusza `drut` do osi czasu PicoLog bez Twojego wyboru. Nie imputuje T4 ani luk rejestracji. Nie uznaje dwóch nakładających się eksportów jednego rejestratora za niezależne eksperymenty.
+
+
+## Porównanie wielu eksperymentów
+
+Po wczytaniu folderu wejdź w **Porównanie**. Zaznacz w tabeli 2–8 eksperymentów (Ctrl/Shift), wybierz `ΔT`, `Te`, `Tc`, `T6`, `T7`, `R_app` lub `RMS`, następnie kliknij `Porównaj zaznaczone`. Wyrównanie `csv` liczy od początku pliku; `on` wymaga ręcznego, potwierdzonego znacznika ON, a `on_estimate` dopuszcza osobno oznaczony szacunek ON? z temperatur. Serie bez wymaganego ON są pomijane z ostrzeżeniem. Luki pomiarowe nie są łączone liniami.
+
+Program **ostrzega**, gdy próby mają różne Q, wiele etapów Q, mieszane kalibracje lub niepotwierdzone podobne chłodzenie. To porównanie **opisowe**, nie automatyczna kwalifikacja statystycznej powtarzalności lub udowodnienia przepływu. Możesz zapisać wykres PNG.
