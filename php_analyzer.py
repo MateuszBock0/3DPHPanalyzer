@@ -287,8 +287,9 @@ def unique_records(items):
                 continue
             n = len(a.t)
             # Prefix matching catches the shorter export of the same measurement.
-            probes = sorted(set([0, n-1, n//2, *range(0, min(n, 150), 5)]))
-            if all(a.t[k] == b.t[k] and a.values[k] == b.values[k] for k in probes):
+            # Full equality is essential: a few matching points (e.g. stable
+            # temperature at startup) cannot prove a common acquisition.
+            if a.t == b.t[:n] and a.values == b.values[:n]:
                 a.fragment_of = b.name
                 break
     return records, errors
@@ -673,10 +674,10 @@ def relative_resistance_proxy(t: list[float], delta_smooth: list[float],
     return rr, refs
 
 
-def analyze(rec: Record) -> Analysis:
+def analyze(rec: Record, *, exclude_thermocouple4=False) -> Analysis:
     t, v = rec.t, rec.values
     te = [(q[0]+q[1])/2 for q in v]
-    tm = [(q[2]+q[3])/2 for q in v]
+    tm = [q[3] if exclude_thermocouple4 else (q[2]+q[3])/2 for q in v]
     tc = [(q[4]+q[5])/2 for q in v]
     delta = [e-c for e,c in zip(te,tc)]
     step = median([b-a for a,b in zip(t,t[1:]) if b>a]) or 1.0
@@ -704,6 +705,9 @@ def analyze(rec: Record) -> Analysis:
             t[begin:end],k1[begin:end],MIN_EPISODE_S,MAX_GAP_S)]
     dsmooth = segmented_average(delta, approx_window(WINDOW_DELTA_S, step), segments)
     notes = []
+    if exclude_thermocouple4:
+        notes.append('QA: T4 wykluczono z agregacji; Tm oznacza tylko T5. '
+                     'K1/DeltaT nadal korzystają z T1/T3 i T6/T7.')
     if rec.fragment_of:
         notes.append('FRAGMENT INNEGO ZAPISU: ' + rec.fragment_of + ' (nie traktować jako niezależnego testu)')
     if rec.bad_rows:
